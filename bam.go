@@ -43,7 +43,7 @@ type BamFrame struct {
 
 type BamCycle struct {
     FrameCount int16
-    FrameIndex uint16
+    FrameIndex int16
 }
 type BamHeader struct {
     Signature, Version [4]byte
@@ -453,7 +453,7 @@ func (bam *BAM) MakeBam(w io.Writer) error {
 
 	for idx, seq := range bam.Sequences {
         cycleEntries[idx].FrameCount = int16(seq.Count)
-		cycleEntries[idx].FrameIndex = uint16(seq.Start)
+		cycleEntries[idx].FrameIndex = int16(seq.Start)
 	}
 	binary.Write(w, binary.LittleEndian, cycleEntries)
 
