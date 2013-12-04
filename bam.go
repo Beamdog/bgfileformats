@@ -393,22 +393,27 @@ func MakeBamFromGif(animation *gif.GIF, sequences []image.Point) (*BAM, error) {
 
 func (bam *BAM) MakeGif(outputPath string, name string) error {
 	for idx, seq := range bam.Sequences {
-		pathname := filepath.Join(outputPath, fmt.Sprintf("%s_%03d.gif", name, idx))
-		g := gif.GIF{}
-		g.Image = make([]*image.Paletted, seq.Count)
-		g.Delay = make([]int, seq.Count)
-		g.LoopCount = 0
-		for iIdx, _ := range bam.Image[seq.Start : seq.Start + seq.Count] {
-			g.Image[iIdx] = &bam.Image[iIdx]
-			g.Delay[iIdx] = 10
-		}
-		outFile, err := os.Create(pathname)
-		if err != nil {
-			return err
-		}
-		gif.EncodeAll(outFile, &g)
+		if seq.Start >= 0 && seq.Count > 0 {
+			pathname := filepath.Join(outputPath, fmt.Sprintf("%s_%03d.gif", name, idx))
+			g := gif.GIF{}
+			g.Image = make([]*image.Paletted, seq.Count)
+			g.Delay = make([]int, seq.Count)
+			g.LoopCount = 0
 
-		outFile.Close()
+			for iIdx := seq.Start; iIdx < seq.Start + seq.Count; iIdx++ {
+				imgIdx := int(bam.SequenceToImage[iIdx])
+
+				g.Image[iIdx - seq.Start] = &bam.Image[imgIdx]
+				g.Delay[iIdx - seq.Start] = 10
+			}
+			outFile, err := os.Create(pathname)
+			if err != nil {
+				return err
+			}
+			gif.EncodeAll(outFile, &g)
+
+			outFile.Close()
+		}
 	}
 	return nil
 }
