@@ -301,16 +301,7 @@ func OpenBAMD(r io.ReadSeeker, palettePath string) (*BAM, error) {
 		if err != nil {
 			return nil, err
 		}
-		colors := make([]color.Color, 256)
-		color := 0
-		for i:= 0; i < palette_template_img.Bounds().Dx() * palette_template_img.Bounds().Dy() && color < len(colors); i++ {
-			y := i / palette_template_img.Bounds().Dx();
-			x := i % palette_template_img.Bounds().Dx();
-
-			colors[color] = palette_template_img.At(x,y)
-			color++
-		}
-		bam.Palette = colors
+		bam.Palette = palette_template_img.ColorModel().(color.Palette)
 	}
 
     return bam, nil
