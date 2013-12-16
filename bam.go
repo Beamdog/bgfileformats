@@ -28,6 +28,7 @@ type BAM struct {
     Width       int
     Height      int
     Frames      []BamFrame
+	RleFrame    [][]uint8
 	Palette     color.Palette
 }
 type BamSequence struct {
@@ -419,8 +420,24 @@ func (bam *BAM) MakeGif(outputPath string, name string) error {
 }
 
 
+type bamcHeader struct {
+	Signature, Version [4]byte
+	Length uint32
 
-func (bam *BAM) MakeBam(w io.Writer) error {
+}
+
+func (bam *BAM) MakeBam(wRaw io.Writer) error {
+	var w io.Writer
+	var b *bytes.Buffer
+	bamc := true
+	bamrle := true
+	if bamc {
+		// keep a reference to our zlib writer around so we can close it/flush it
+		b = bytes.NewBuffer([]byte{})
+		w = b
+	} else {
+		w = wRaw
+	}
 	header := BamHeader{}
 	cycleEntries := make([]BamCycle, len(bam.Sequences))
 
@@ -438,12 +455,24 @@ func (bam *BAM) MakeBam(w io.Writer) error {
 		return err
 	}
 
+	if bamrle {
+		bam.RleFrame = make([][]uint8, len(bam.Image))
+		for idx, img := range bam.Image {
+			bam.RleFrame[idx] = rleBam(img.Pix, header.CompressedColor)
+		}
+	}
 
 	frameDataStart := header.FrameLutOffset + uint32(binary.Size(bam.SequenceToImage))
 	lastOffset := 0
 	for idx, frame := range bam.Frames {
-		bam.Frames[idx].FrameOffset = frameDataStart + uint32(lastOffset) | 0x80000000
-		lastOffset += int(frame.Width) * int(frame.Height)
+		bam.Frames[idx].FrameOffset = frameDataStart + uint32(lastOffset)
+		if !bamrle {
+			bam.Frames[idx].FrameOffset |= 0x80000000
+			lastOffset += int(frame.Width) * int(frame.Height)
+
+		} else {
+			lastOffset += len(bam.RleFrame[idx])
+		}
 	}
 	binary.Write(w, binary.LittleEndian, bam.Frames)
 
@@ -467,12 +496,55 @@ func (bam *BAM) MakeBam(w io.Writer) error {
 	binary.Write(w, binary.LittleEndian, palette)
 
 	binary.Write(w, binary.LittleEndian, bam.SequenceToImage)
-	for _, img := range bam.Image {
-		binary.Write(w, binary.LittleEndian, img.Pix)
+	for idx, img := range bam.Image {
+		if bamrle {
+			w.Write(bam.RleFrame[idx])
+		} else {
+			w.Write(img.Pix)
+		}
+	}
 
+	if bamc {
+		h := bamcHeader{Signature: [4]byte{'B','A','M','C'}, Version: [4]byte{'V','1',' ',' '}}
+		h.Length = uint32(b.Len())
+		binary.Write(wRaw, binary.LittleEndian, h)
+
+		var data bytes.Buffer
+		zw := zlib.NewWriter(&data)
+		zw.Write(b.Bytes())
+		zw.Close()
+
+
+		_, err := wRaw.Write(data.Bytes())
+		if err != nil {
+			return err
+		}
 	}
 
 	return nil
+}
+
+func rleBam(pix []uint8, rleKey uint8) []byte {
+	out := make([]byte, 0)
+	inTransparent := false
+	for idx := range pix {
+		if pix[idx] == rleKey {
+			if inTransparent {
+				out[len(out)-1]++
+				if out[len(out)-1] == 255 {
+					inTransparent = false
+				}
+			} else {
+                out = append(out, pix[idx])
+                out = append(out, 0)
+				inTransparent = true
+			}
+		} else {
+			inTransparent = false
+			out = append(out, pix[idx])
+		}
+	}
+	return out
 }
 
 
