@@ -21,6 +21,16 @@ import (
 	"text/scanner"
 )
 
+func next_pow_two(v uint) uint {
+    v |= v >> 1;
+    v |= v >> 2;
+    v |= v >> 4;
+    v |= v >> 8;
+    v |= v >> 16;
+    v++;
+    return v;
+}
+
 type BAM struct {
 	Image           []image.Paletted
 	Sequences       []BamSequence
@@ -586,3 +596,47 @@ func (bam *BAM) MakeBamd(output string, name string, mirror bool, offset_x int, 
 		fmt.Printf("\n")
 	}
 }
+func (bam *BAM) MakeSpriteSheet(w io.Writer) {
+	size := image.Point{0,0}
+
+	for _, frame := range bam.Frames {
+		if size.X < int(frame.Width) + int(frame.CenterX) {
+			size.X = int(frame.Width) + int(frame.CenterX)
+		}
+		if size.Y < int(frame.Height) + int(frame.CenterY) {
+			size.Y = int(frame.Width) + int(frame.CenterY)
+		}
+	}
+	size.X = int(next_pow_two(uint(size.X)))
+	size.Y = int(next_pow_two(uint(size.Y)))
+	maxSeq := 0
+	for _, seq := range bam.Sequences {
+		if int(seq.Count) > maxSeq {
+			maxSeq = int(seq.Count)
+		}
+	}
+	i := image.NewPaletted(image.Rect(0, 0, size.X * (maxSeq + 1), size.Y * (len(bam.Sequences)+1)), bam.Image[0].Palette)
+	for idx, seq := range bam.Sequences {
+		y := idx * size.Y
+		for v := seq.Start; v < seq.Start + seq.Count; v++ {
+			x := int(v - seq.Start) * size.X
+			seqToImage := bam.SequenceToImage[v]
+			if seqToImage >= 0 {
+				img := &bam.Image[seqToImage]
+				frame := bam.Frames[seqToImage]
+				offsetX := size.X / 2 - int(frame.Width) / 2 + int(frame.CenterX)
+				offsetY := size.Y / 2 - int(frame.Height) / 2 + int(frame.CenterY)
+				drawRect := image.Rect(
+					x + offsetX,
+					y + offsetY,
+					x + offsetX + int(frame.Width),
+					y + offsetY + int(frame.Height),
+				)
+
+				draw.Draw(i, drawRect, img, image.Point{0,0}, draw.Src)
+			}
+		}
+	}
+	png.Encode(w, i)
+}
+
