@@ -22,13 +22,13 @@ import (
 )
 
 func next_pow_two(v uint) uint {
-    v |= v >> 1;
-    v |= v >> 2;
-    v |= v >> 4;
-    v |= v >> 8;
-    v |= v >> 16;
-    v++;
-    return v;
+	v |= v >> 1
+	v |= v >> 2
+	v |= v >> 4
+	v |= v >> 8
+	v |= v >> 16
+	v++
+	return v
 }
 
 type BAM struct {
@@ -597,13 +597,13 @@ func (bam *BAM) MakeBamd(output string, name string, mirror bool, offset_x int, 
 	}
 }
 func (bam *BAM) MakeSpriteSheet(w io.Writer) {
-	size := image.Point{0,0}
+	size := image.Point{0, 0}
 
 	for _, frame := range bam.Frames {
-		if size.X < int(frame.Width) + int(frame.CenterX) {
+		if size.X < int(frame.Width)+int(frame.CenterX) {
 			size.X = int(frame.Width) + int(frame.CenterX)
 		}
-		if size.Y < int(frame.Height) + int(frame.CenterY) {
+		if size.Y < int(frame.Height)+int(frame.CenterY) {
 			size.Y = int(frame.Width) + int(frame.CenterY)
 		}
 	}
@@ -615,28 +615,34 @@ func (bam *BAM) MakeSpriteSheet(w io.Writer) {
 			maxSeq = int(seq.Count)
 		}
 	}
-	i := image.NewPaletted(image.Rect(0, 0, size.X * (maxSeq + 1), size.Y * (len(bam.Sequences)+1)), bam.Image[0].Palette)
+	min := size.X
+	if size.Y > min {
+		min = size.Y
+	}
+	size.X = min
+	size.Y = min
+	log.Printf("Size %+v\n", size)
+	i := image.NewPaletted(image.Rect(0, 0, size.X*(maxSeq+1), size.Y*(len(bam.Sequences)+1)), bam.Image[0].Palette)
 	for idx, seq := range bam.Sequences {
 		y := idx * size.Y
-		for v := seq.Start; v < seq.Start + seq.Count; v++ {
-			x := int(v - seq.Start) * size.X
+		for v := seq.Start; v < seq.Start+seq.Count; v++ {
+			x := int(v-seq.Start) * size.X
 			seqToImage := bam.SequenceToImage[v]
 			if seqToImage >= 0 {
 				img := &bam.Image[seqToImage]
 				frame := bam.Frames[seqToImage]
-				offsetX := size.X / 2 - int(frame.Width) / 2 + int(frame.CenterX)
-				offsetY := size.Y / 2 - int(frame.Height) / 2 + int(frame.CenterY)
+				offsetX := size.X/2 - int(frame.Width)/2 + int(frame.CenterX)
+				offsetY := size.Y/2 - int(frame.Height)/2 + int(frame.CenterY)
 				drawRect := image.Rect(
-					x + offsetX,
-					y + offsetY,
-					x + offsetX + int(frame.Width),
-					y + offsetY + int(frame.Height),
+					x+offsetX,
+					y+offsetY,
+					x+offsetX+int(frame.Width),
+					y+offsetY+int(frame.Height),
 				)
 
-				draw.Draw(i, drawRect, img, image.Point{0,0}, draw.Src)
+				draw.Draw(i, drawRect, img, image.Point{0, 0}, draw.Src)
 			}
 		}
 	}
 	png.Encode(w, i)
 }
-

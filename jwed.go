@@ -6,6 +6,9 @@ import (
 	"fmt"
 	"github.com/ajstarks/svgo"
 	"image"
+	"image/color"
+	"image/draw"
+	"image/png"
 	"io"
 	"io/ioutil"
 	"log"
@@ -17,19 +20,23 @@ import (
 )
 
 type JsonWed struct {
-	Overlays []jsonWedOverlay
-	Doors    []jsonWedDoor
-	Walls    []jsonWedPolygon `json:"-"`
+	Overlays    []jsonWedOverlay
+	Doors       []jsonWedDoor
+	Walls       []jsonWedPolygon `json:"-"`
+	TileIndices []int            `json:"-"`
 }
 
 type jsonWedOverlay struct {
-	Width   int
-	Height  int
-	Name    string
-	Flags   int
-	Tilemap []jsonWedTilemap `json:"-"`
-	Stencil string `json:",omitempty"`
-	Svg     string `json:",omitempty"`
+	Width         int
+	Height        int
+	Name          string
+	Flags         int
+	Tilemap       []jsonWedTilemap `json:"-"`
+	Stencil       string           `json:",omitempty"`
+	Svg           string           `json:",omitempty"`
+	BackgroundImg image.Image      `json:"-"`
+	StencilImg    image.Image      `json:"-"`
+	ClosedImage   image.Image      `json:"-"`
 }
 
 type jsonWedTilemap struct {
@@ -52,6 +59,39 @@ type jsonWedPolygon struct {
 	Mode   int
 	Height byte
 	Verts  []image.Point
+}
+
+func (o *jsonWedOverlay) PixelWidth() int {
+	return o.Width * 64
+}
+func (o *jsonWedOverlay) PixelHeight() int {
+	return o.Height * 64
+}
+
+func (o *jsonWedOverlay) TileImage(x int, y int, closed bool) *image.RGBA {
+	rect := image.Rect(x*64, y*64, x*64+64, y*64+64)
+
+	img := image.NewRGBA(image.Rect(0, 0, 64, 64))
+	trans := color.RGBA{0, 255, 0, 255}
+
+	for y := rect.Min.Y; y < rect.Max.Y; y++ {
+		for x := rect.Min.X; x < rect.Max.X; x++ {
+			var c color.Color
+			if closed {
+				c = o.ClosedImage.At(x, y)
+			} else {
+				c = o.BackgroundImg.At(x, y)
+			}
+			_, _, _, a := c.RGBA()
+			if a == 0 {
+				img.Set(x-rect.Min.X, y-rect.Min.Y, trans)
+			} else {
+				img.Set(x-rect.Min.X, y-rect.Min.Y, c)
+			}
+		}
+	}
+
+	return img
 }
 
 func (poly *jsonWedPolygon) SvgPath() string {
@@ -88,16 +128,17 @@ func (jw *JsonWed) Export(name string, dir string) error {
 		return err
 	}
 	defer jsonFile.Close()
-	jw.Overlays[0].Svg = name + ".svg"
 
-	data, err := jw.ToJson()
+	tisFile, err := os.Open(filepath.Join(dir, name) + ".tis")
 	if err != nil {
 		return err
 	}
-	jsonFile.WriteString(data)
+	defer tisFile.Close()
 
-	width := jw.Overlays[0].Width * 64
-	height := jw.Overlays[0].Height * 64
+	jw.Overlays[0].Svg = name + ".svg"
+
+	width := jw.Overlays[0].PixelWidth()
+	height := jw.Overlays[0].PixelHeight()
 
 	wallSvg := svg.New(wallSvgFile)
 	wallSvg.Start(width, height)
@@ -136,26 +177,150 @@ func (jw *JsonWed) Export(name string, dir string) error {
 	}
 	wallSvg.End()
 
+	log.Printf("Name: %s\n", name)
+
+	tis, err := OpenTis(tisFile, name, dir)
+	if err != nil {
+		return err
+	}
+
+	for overlayIdx, _ := range jw.Overlays[1:] {
+		overlay := &jw.Overlays[1+overlayIdx]
+		if overlay.Width > 0 && overlay.Height > 0 {
+			tileList := make([]jsonWedTilemap, 0)
+			for _, tm := range jw.Overlays[0].Tilemap {
+				if tm.Flags&(1<<uint(overlayIdx+1)) == (1 << uint(overlayIdx+1)) {
+					tileList = append(tileList, tm)
+				} else if tm.Flags != 0 {
+					log.Printf("Idx: %d Flags: %d\n", overlayIdx+1, tm.Flags)
+				}
+			}
+
+			img := image.NewRGBA(image.Rect(0, 0, jw.Overlays[0].PixelWidth(), jw.Overlays[0].PixelHeight()))
+			tileBounds := image.Rect(0, 0, 64, 64)
+
+			for _, tm := range tileList {
+				tileId := 0
+				if tm.Alt != -1 {
+					tileId = tm.Alt
+				} else {
+					tileId = jw.TileIndices[tm.Id]
+				}
+				tileImg := tis.SubImage(tileId)
+				X, Y := 64*(jw.TileIndices[tm.Id]%jw.Overlays[0].Width), 64*(jw.TileIndices[tm.Id]/jw.Overlays[0].Width)
+
+				filter := true
+				if filter {
+					for y := tileBounds.Min.Y; y < tileBounds.Max.Y; y++ {
+						for x := tileBounds.Min.X; x < tileBounds.Max.X; x++ {
+							r, g, b, _ := tileImg.At(x, y).RGBA()
+							if r == 0 && g == 0 && b == 0 {
+								tileImg.Set(x, y, color.RGBA{0, 0, 0, 0})
+							}
+							if r == 0 && g == 65535 && b == 0 {
+								tapCount := 0
+								cr, cg, cb := 0, 0, 0
+								taps := []image.Point{{x - 1, y}, {x + 1, y}, {x, y - 1}, {x, y + 1}}
+								for _, tap := range taps {
+									if tap.In(tileBounds) {
+										tapCount++
+										tr, tg, tb, _ := tileImg.At(tap.X, tap.Y).RGBA()
+										cr += int(tr)
+										cg += int(tg)
+										cb += int(tb)
+									}
+								}
+								divider := tapCount * 0xFF
+								tileImg.Set(x, y, color.RGBA{uint8(cr / divider), uint8(cg / divider), uint8(cb / divider), 255})
+							}
+						}
+					}
+				}
+				draw.Draw(img, image.Rect(X, Y, X+64, Y+64), tileImg, image.Pt(0, 0), draw.Src)
+			}
+			stencilName := fmt.Sprintf("%s_overlay_%d.png", name, overlayIdx+1)
+			f, err := os.Create(filepath.Join(dir, stencilName))
+			if err != nil {
+				return err
+			}
+			png.Encode(f, img)
+
+			f.Close()
+			overlay.Stencil = fmt.Sprintf("%s_overlay_%d", name, overlayIdx+1)
+
+		}
+	}
+
+	if len(jw.Doors) > 0 {
+		img := image.NewRGBA(image.Rect(0, 0, jw.Overlays[0].PixelWidth(), jw.Overlays[0].PixelHeight()))
+		for _, door := range jw.Doors {
+			tiles := door.EffectedTiles(image.Point{jw.Overlays[0].PixelWidth(), jw.Overlays[0].PixelHeight()})
+			for _, tile := range tiles {
+				X, Y := 64*(tile%jw.Overlays[0].Width), 64*(tile/jw.Overlays[0].Width)
+				tileBounds := image.Rect(0, 0, 64, 64)
+				tm := jw.Overlays[0].Tilemap[tile]
+				tileId := 0
+				if tm.Alt != -1 {
+					tileId = tm.Alt
+				} else {
+					tileId = jw.TileIndices[tm.Id]
+				}
+
+				tileImg := tis.SubImage(tileId)
+				for y := tileBounds.Min.Y; y < tileBounds.Max.Y; y++ {
+					for x := tileBounds.Min.X; x < tileBounds.Max.X; x++ {
+						r, g, b, _ := tileImg.At(x, y).RGBA()
+						if r == 0 && g == 0 && b == 0 {
+							tileImg.Set(x, y, color.RGBA{0, 0, 0, 0})
+						}
+					}
+				}
+
+				draw.Draw(img, image.Rect(X, Y, X+64, Y+64), tileImg, image.Pt(0, 0), draw.Src)
+			}
+		}
+		closedName := fmt.Sprintf("%sc.png", name)
+		f, err := os.Create(filepath.Join(dir, closedName))
+		if err != nil {
+			return err
+		}
+		png.Encode(f, img)
+		f.Close()
+	}
+
+	data, err := jw.ToJson()
+	if err != nil {
+		return err
+	}
+	jsonFile.WriteString(data)
 	return nil
 }
 
 func (jw *JsonWed) ImportOverlays(wed *Wed) {
-	jw.Overlays = make([]jsonWedOverlay, len(wed.Overlays))
+	jw.Overlays = make([]jsonWedOverlay, 0)
+	jw.TileIndices = make([]int, len(wed.TileIndices))
 	for idx, overlay := range wed.Overlays {
-		jw.Overlays[idx].Width = int(overlay.Width)
-		jw.Overlays[idx].Height = int(overlay.Height)
-		jw.Overlays[idx].Name = overlay.Name.String()
-		jw.Overlays[idx].Flags = int(overlay.LayerFlags)
+		if overlay.Name.String() != "" {
+			ov := jsonWedOverlay{}
+			ov.Width = int(overlay.Width)
+			ov.Height = int(overlay.Height)
+			ov.Name = overlay.Name.String()
+			ov.Flags = int(overlay.LayerFlags)
 
-		jw.Overlays[idx].Tilemap = make([]jsonWedTilemap, len(wed.Tilemaps[idx]))
-		for tmIdx, tilemap := range wed.Tilemaps[idx] {
-			jw.Overlays[idx].Tilemap[tmIdx].Id = int(tilemap.TileIndexLookupIndex)
-			jw.Overlays[idx].Tilemap[tmIdx].Count = int(tilemap.TileIndexLookupCount)
-			jw.Overlays[idx].Tilemap[tmIdx].Alt = int(tilemap.AlternateTileIndex)
-			jw.Overlays[idx].Tilemap[tmIdx].Flags = int(tilemap.Flags)
-			jw.Overlays[idx].Tilemap[tmIdx].AnimSpeed = int(tilemap.AnimSpeed)
-			jw.Overlays[idx].Tilemap[tmIdx].WFlags = int(tilemap.WFlags)
+			ov.Tilemap = make([]jsonWedTilemap, len(wed.Tilemaps[idx]))
+			for tmIdx, tilemap := range wed.Tilemaps[idx] {
+				ov.Tilemap[tmIdx].Id = int(tilemap.TileIndexLookupIndex)
+				ov.Tilemap[tmIdx].Count = int(tilemap.TileIndexLookupCount)
+				ov.Tilemap[tmIdx].Alt = int(tilemap.AlternateTileIndex)
+				ov.Tilemap[tmIdx].Flags = int(tilemap.Flags)
+				ov.Tilemap[tmIdx].AnimSpeed = int(tilemap.AnimSpeed)
+				ov.Tilemap[tmIdx].WFlags = int(tilemap.WFlags)
+			}
+			jw.Overlays = append(jw.Overlays, ov)
 		}
+	}
+	for idx, ti := range wed.TileIndices {
+		jw.TileIndices[idx] = int(ti)
 	}
 }
 
@@ -253,6 +418,7 @@ func (poly *jsonWedPolygon) ToWedPoly() (wedPolygon, []wedVertex) {
 		verts[idx].X = int16(v.X)
 		verts[idx].Y = int16(v.Y)
 	}
+	wedPoly.VertexCount = uint32(len(poly.Verts))
 
 	return wedPoly, verts
 }
@@ -339,8 +505,6 @@ func (jw *JsonWed) ToWed() (*Wed, error) {
 	wed.Header = wedHeader{
 		Signature:           [4]byte{'W', 'E', 'D', ' '},
 		Version:             [4]byte{'V', '1', '.', '3'},
-		OverlayCount:        uint32(len(jw.Overlays)),
-		DoorCount:           uint32(len(jw.Doors)),
 		OverlayOffset:       uint32(0),
 		SecondHeaderOffset:  uint32(0),
 		DoorOffset:          uint32(0),
@@ -350,6 +514,7 @@ func (jw *JsonWed) ToWed() (*Wed, error) {
 	wed.Overlays = make([]wedOverlay, len(jw.Overlays))
 	wed.Tilemaps = make([][]wedTilemap, len(jw.Overlays))
 	wed.TileIndices = make([]uint16, 0)
+	tis := NewTis()
 	for idx, overlay := range jw.Overlays {
 		o := &wed.Overlays[idx]
 		o.Width = uint16(overlay.Width)
@@ -360,13 +525,23 @@ func (jw *JsonWed) ToWed() (*Wed, error) {
 		o.TileIndexLookupOffset = 0
 		wed.Tilemaps[idx] = make([]wedTilemap, len(overlay.Tilemap))
 		o.TilemapOffset = uint32(0)
-		for i := 0; i < overlay.Width*overlay.Height; i++ {
-			tm := &wed.Tilemaps[idx][i]
-			tm.AlternateTileIndex = -1
-			tm.TileIndexLookupIndex = uint16(i + 1)
-			tm.TileIndexLookupCount = 1
-			wed.TileIndices = append(wed.TileIndices, tm.TileIndexLookupIndex)
+
+		for y := 0; y < overlay.Height; y++ {
+			for x := 0; x < overlay.Width; x++ {
+				if idx == 0 {
+					tis.AddTile(overlay.TileImage(x, y, false))
+				}
+				tm := &wed.Tilemaps[idx][y*overlay.Width+x]
+				tm.AlternateTileIndex = -1
+				tm.TileIndexLookupIndex = uint16(y*overlay.Width + x)
+				tm.TileIndexLookupCount = 1
+				wed.TileIndices = append(wed.TileIndices, tm.TileIndexLookupIndex)
+			}
 		}
+
+		/*if overlay.Width * 64 < overlay.BackgroundImg.Bounds().Dx() || overlay.Height * 64 < overlay.BackgroundImg.Bounds().Dy() {
+			log.Printf("bigger then area: %s", overlay.Name)
+		}*/
 	}
 
 	wed.Polygons, wed.Vertices, wed.PolygonIndices, wed.WallGroups = jw.GenerateWallPolys()
@@ -379,7 +554,7 @@ func (jw *JsonWed) ToWed() (*Wed, error) {
 		d.Name = NewResref(door.Name)
 		d.State = uint16(door.State)
 		d.DoorTileCellIndex = uint16(doorTileCellIndex)
-		effectedTiles := door.EffectedTiles(image.Point{int(wed.Overlays[0].Width * 64), int(wed.Overlays[0].Height * 64)})
+		effectedTiles := door.EffectedTiles(image.Point{jw.Overlays[0].PixelWidth(), jw.Overlays[0].PixelHeight()})
 		d.DoorTileCellCount = uint16(len(effectedTiles))
 		doorTileCellIndex += len(effectedTiles)
 		d.PolygonOpenCount = uint16(len(door.PolygonsOpen))
@@ -398,13 +573,79 @@ func (jw *JsonWed) ToWed() (*Wed, error) {
 			wed.Vertices = append(wed.Vertices, verts...)
 		}
 		for _, tileId := range effectedTiles {
+			y := tileId / jw.Overlays[0].Width
+			x := tileId % jw.Overlays[0].Width
+			altTile := tis.AddTile(jw.Overlays[0].TileImage(x, y, true))
+			tm := &wed.Tilemaps[idx][tileId]
+			tm.AlternateTileIndex = int16(altTile)
 			wed.DoorTileCells = append(wed.DoorTileCells, uint16(tileId))
 		}
 	}
 
 	wed.UpdateOffsets()
 
+	f, err := os.Create(fmt.Sprintf("%s.tis", jw.Overlays[0].Name))
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+
+	err = tis.Write(f)
+	if err != nil {
+		return nil, err
+	}
+
 	return &wed, nil
+}
+
+func (jw *JsonWed) importImages() error {
+	for idx := range jw.Overlays {
+		overlay := &jw.Overlays[idx]
+		if overlay.Name != "" {
+			f, err := os.Open(overlay.Name + ".png")
+			if err != nil {
+				return err
+			}
+
+			img, err := png.Decode(f)
+			if err != nil {
+				return err
+			}
+
+			overlay.BackgroundImg = img
+
+			f.Close()
+
+		}
+		if overlay.Stencil != "" {
+			f, err := os.Open(overlay.Stencil + ".png")
+			if err != nil {
+				return err
+			}
+
+			stencil, err := png.Decode(f)
+			if err != nil {
+				return err
+			}
+
+			overlay.StencilImg = stencil
+
+			f.Close()
+		}
+	}
+
+	f, err := os.Open(jw.Overlays[0].Name + "c.png")
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+
+	closed, err := png.Decode(f)
+	if err != nil {
+		return err
+	}
+	jw.Overlays[0].ClosedImage = closed
+
+	return nil
 }
 
 func (jw *JsonWed) importSvg() error {
@@ -442,15 +683,24 @@ func (jw *JsonWed) importSvg() error {
 					}
 				}
 			}
+			f.Close()
 		}
 	}
-	log.Printf("Door: %+v\n", jw.Doors[0])
 	return nil
 }
 
-func (jw *JsonWed) importStencils() {
-	for _, overlay := range jw.Overlays {
+func (jw *JsonWed) generateTilemaps() error {
+	for idx, _ := range jw.Overlays {
+		overlay := &jw.Overlays[idx]
 
+		overlay.Tilemap = make([]jsonWedTilemap, overlay.Width*overlay.Height)
+		for tmIdx, _ := range overlay.Tilemap {
+			tm := &overlay.Tilemap[tmIdx]
+
+			tm.Id = tmIdx
+			tm.Count = 1
+			tm.Alt = -1
+		}
 	}
 	return nil
 }
@@ -469,7 +719,11 @@ func OpenJWed(r io.ReadSeeker) (*JsonWed, error) {
 		return nil, err
 	}
 
-	if err = jwed.importStencils(); err != nil {
+	if err = jwed.importImages(); err != nil {
+		return nil, err
+	}
+
+	if err = jwed.generateTilemaps(); err != nil {
 		return nil, err
 	}
 

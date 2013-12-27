@@ -3,6 +3,9 @@ package bg
 import (
 	"encoding/binary"
 	"encoding/json"
+	"image"
+	"image/draw"
+	"image/png"
 	"io"
 	"log"
 	"os"
@@ -122,14 +125,17 @@ func (wed *Wed) UpdateOffsets() {
 	}
 	wed.Header.DoorTileCellsOffset = uint32(int(wed.Header.DoorOffset) + binary.Size(wed.Doors) + tmSize)
 
-	log.Printf("Header: %+v\n", wed.Header)
-
-	wed.Header2.PolygonCount = uint32(len(wed.Doors))
+	polygonCount := 0
+	for _, poly := range wed.Polygons {
+		if poly.Mode&0x80 == 0 {
+			polygonCount++
+		}
+	}
+	wed.Header2.PolygonCount = uint32(polygonCount)
 	wed.Header2.WallGroupOffset = uint32(int(wed.Header.DoorTileCellsOffset) + binary.Size(wed.DoorTileCells) + binary.Size(wed.TileIndices))
 	wed.Header2.PolygonOffset = uint32(int(wed.Header2.WallGroupOffset) + binary.Size(wed.WallGroups))
 	wed.Header2.PolygonIndexLookupOffset = uint32(int(wed.Header2.PolygonOffset) + binary.Size(wed.Polygons))
 	wed.Header2.VertexOffset = uint32(int(wed.Header2.PolygonIndexLookupOffset) + binary.Size(wed.PolygonIndices))
-	log.Printf("Header2: %+v\n", wed.Header2)
 
 	// Update overlay offsets
 	tmOffset := int(wed.Header.DoorOffset) + binary.Size(wed.Doors)
@@ -166,59 +172,76 @@ func (wed *Wed) Write(w io.Writer) error {
 		return err
 	}
 	offset := binary.Size(wed.Header)
-	log.Printf("Overlays at: %d %X\n", offset, offset)
 	if err := binary.Write(w, binary.LittleEndian, wed.Overlays); err != nil {
 		return err
 	}
 	offset += binary.Size(wed.Overlays)
-	log.Printf("Header2 at: %d %X\n", offset, offset)
 	if err := binary.Write(w, binary.LittleEndian, wed.Header2); err != nil {
 		return err
 	}
 	offset += binary.Size(wed.Header2)
-	log.Printf("Doors at: %d %X\n", offset, offset)
 	if err := binary.Write(w, binary.LittleEndian, wed.Doors); err != nil {
 		return err
 	}
 	offset += binary.Size(wed.Doors)
-	log.Printf("Tilemaps at: %d %X\n", offset, offset)
 	for _, tm := range wed.Tilemaps {
 		if err := binary.Write(w, binary.LittleEndian, tm); err != nil {
 			return err
 		}
 		offset += binary.Size(tm)
 	}
-	log.Printf("DoorTileCells at: %d %X\n", offset, offset)
 	if err := binary.Write(w, binary.LittleEndian, wed.DoorTileCells); err != nil {
 		return err
 	}
 	offset += binary.Size(wed.DoorTileCells)
-	log.Printf("TileIndices at: %d %X\n", offset, offset)
 	if err := binary.Write(w, binary.LittleEndian, wed.TileIndices); err != nil {
 		return err
 	}
 	offset += binary.Size(wed.TileIndices)
-	log.Printf("Wall Groups at: %d %X\n", offset, offset)
 	if err := binary.Write(w, binary.LittleEndian, wed.WallGroups); err != nil {
 		return err
 	}
 	offset += binary.Size(wed.WallGroups)
-	log.Printf("Polygons at: %d %X\n", offset, offset)
 	if err := binary.Write(w, binary.LittleEndian, wed.Polygons); err != nil {
 		return err
 	}
 	offset += binary.Size(wed.Polygons)
-	log.Printf("PolygonIndices at: %d %X\n", offset, offset)
 	if err := binary.Write(w, binary.LittleEndian, wed.PolygonIndices); err != nil {
 		return err
 	}
 	offset += binary.Size(wed.PolygonIndices)
-	log.Printf("Vertices at: %d %X\n", offset, offset)
 	if err := binary.Write(w, binary.LittleEndian, wed.Vertices); err != nil {
 		return err
 	}
 	offset += binary.Size(wed.Vertices)
-	log.Printf("EOF at: %d %X\n", offset, offset)
+	return nil
+}
+
+func (wed *Wed) WritePng(w io.Writer) error {
+	tisFile, err := os.Open(wed.Overlays[0].Name.String() + ".tis")
+	if err != nil {
+		return err
+	}
+	defer tisFile.Close()
+	cwd, err := os.Getwd()
+	if err != nil {
+		return err
+	}
+	tis, err := OpenTis(tisFile, wed.Overlays[0].Name.String(), cwd)
+	if err != nil {
+		return err
+	}
+
+	img := image.NewRGBA(image.Rect(0, 0, 64*int(wed.Overlays[0].Width), 64*int(wed.Overlays[0].Height)))
+	for y := 0; y < int(wed.Overlays[0].Height); y++ {
+		for x := 0; x < int(wed.Overlays[0].Width); x++ {
+			tileNum := y*int(wed.Overlays[0].Width) + x
+			tileImg := tis.SubImage(tileNum)
+			draw.Draw(img, image.Rect(x*64, y*64, x*64+64, y*64+64), tileImg, image.Pt(0, 0), draw.Src)
+		}
+	}
+	png.Encode(w, img)
+
 	return nil
 }
 

@@ -2,13 +2,13 @@ package bg
 
 import (
 	"encoding/xml"
+	"image"
 	"io"
-	"text/scanner"
-	"strings"
-	"strconv"
 	"log"
 	"regexp"
-	"image"
+	"strconv"
+	"strings"
+	"text/scanner"
 )
 
 type svgVert struct {
@@ -22,7 +22,7 @@ type svgPolyline struct {
 
 type svgPolygon struct {
 	Points []svgVert
-	Mode int
+	Mode   int
 }
 
 type svgPath struct {
@@ -34,10 +34,10 @@ type svgPath struct {
 }
 
 type svgGroup struct {
-	Name      string        `xml:"id,attr"`
-	Groups    []svgGroup    `xml:"g"`
-	Paths     []svgPath     `xml:"path"`
-	Transform string        `xml:"transform,attr"`
+	Name      string     `xml:"id,attr"`
+	Groups    []svgGroup `xml:"g"`
+	Paths     []svgPath  `xml:"path"`
+	Transform string     `xml:"transform,attr"`
 	translate svgVert
 }
 
@@ -50,10 +50,17 @@ type SvgFile struct {
 
 func scanTwoInts(s scanner.Scanner) (int, int) {
 	s.Scan()
-	X, _ := strconv.Atoi(s.TokenText())
+	X, err := strconv.ParseFloat(s.TokenText(), 32)
+	if err != nil {
+		log.Printf("Error: %+v\n", err)
+	}
+	s.Scan() // comma between values
 	s.Scan()
-	Y, _ := strconv.Atoi(s.TokenText())
-	return X,Y
+	Y, err := strconv.ParseFloat(s.TokenText(), 32)
+	if err != nil {
+		log.Printf("Error: %+v\n", err)
+	}
+	return int(X), int(Y)
 }
 func scanOneInt(s scanner.Scanner) int {
 	s.Scan()
@@ -66,7 +73,7 @@ func (path *svgPath) mode() int {
 	if path.Description != "" {
 		matches := settingRegexp.FindStringSubmatch(path.Description)
 		if matches != nil {
-			switch(matches[1]) {
+			switch matches[1] {
 			case "mode":
 				val, _ := strconv.Atoi(strings.TrimSpace(matches[2]))
 				return val
@@ -92,12 +99,11 @@ func (path *svgPath) generatePath() {
 	s.Init(strings.NewReader(path.D))
 	s.Mode = scanner.ScanFloats | scanner.ScanChars
 
-
 	var curPoly *svgPolygon
 	cursor := svgVert{0, 0}
 	tok := s.Scan()
 	for tok != scanner.EOF {
-		switch(s.TokenText()) {
+		switch s.TokenText() {
 		case "M":
 			poly := svgPolygon{Mode: path.mode()}
 			curPoly = &poly
@@ -179,7 +185,7 @@ func (group *svgGroup) process() {
 	}
 }
 
-func (group *svgGroup) GetPaths() []svgPath{
+func (group *svgGroup) GetPaths() []svgPath {
 	paths := make([]svgPath, 0)
 	if strings.HasPrefix(group.Name, "door_open_") || strings.HasPrefix(group.Name, "door_closed_") || strings.HasPrefix(group.Name, "walls") {
 		for _, p := range group.Paths {

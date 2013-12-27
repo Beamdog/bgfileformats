@@ -13,7 +13,7 @@ func (r *LONGSTRING) String() string {
 	return str
 }
 
-func (r *LONGSTRING) MarshalJSON() ([]byte, error){
+func (r *LONGSTRING) MarshalJSON() ([]byte, error) {
 	return []byte("\"" + r.String() + "\""), nil
 }
 
@@ -31,7 +31,6 @@ func (r *RESREF) String() string {
 	str := strings.Split(string(r.Name[0:]), "\x00")[0]
 	return str
 }
-func (r *RESREF) MarshalJSON() ([]byte, error){
+func (r *RESREF) MarshalJSON() ([]byte, error) {
 	return []byte("\"" + r.String() + "\""), nil
 }
-
