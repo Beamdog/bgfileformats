@@ -97,18 +97,28 @@ func (tis *Tis) writeV1(w io.Writer) error {
 	tileColors := [256]uint32{}
 	tileData := [4096]uint8{}
 	palette := make([]color.Color, 256)
-	palette[1] = color.RGBA{0, 255, 0, 255}
+	palette[0] = color.RGBA{0, 255, 0, 255}
 	outImg := image.NewPaletted(image.Rect(0, 0, 64, 64), palette)
 	for _, img := range tis.imgTiles {
 		mcq := MedianCutQuantizer{255}
 		mcq.Quantize(outImg, image.Rect(0, 0, 64, 64), img, image.Point{})
 		for idx, c := range outImg.Palette {
 			r, g, b, _ := c.RGBA()
-			tileColors[idx] = uint32(((r >> 8) << 16) | ((g >> 8) << 8) | (b >> 8))
+			tileColors[idx+1] = uint32((255 << 24) | ((r >> 8) << 16) | ((g >> 8) << 8) | (b >> 8))
 
 		}
+		tileColors[0] = uint32((255 << 24) | (255 << 8))
 		for idx, i := range outImg.Pix {
-			tileData[idx] = i
+			x := idx % img.Bounds().Dx()
+			y := idx / img.Bounds().Dx()
+			_, _, _, a := img.At(x, y).RGBA()
+			if a == 0 {
+				tileData[idx] = 0
+			} else if tileColors[i+1] == tileColors[0] {
+				tileData[idx] = 0
+			} else {
+				tileData[idx] = i + 1
+			}
 		}
 		binary.Write(w, binary.LittleEndian, tileColors)
 		binary.Write(w, binary.LittleEndian, tileData)
@@ -168,7 +178,18 @@ func (tex *tisPvrTexture) decompressDXT1(block []uint8) {
 }
 
 func (tis *Tis) AddTile(img *image.RGBA) int {
-	tis.imgTiles = append(tis.imgTiles, img)
+	newImg := image.NewRGBA(image.Rect(0, 0, 64, 64))
+
+	bounds := img.Bounds()
+	for y := bounds.Min.Y; y < bounds.Max.Y; y++ {
+		for x := bounds.Min.X; x < bounds.Max.X; x++ {
+			c := img.At(x, y)
+			//_,_,_,a := c.RGBA()
+			newImg.Set(x, y, c)
+		}
+	}
+
+	tis.imgTiles = append(tis.imgTiles, newImg)
 	return len(tis.imgTiles) - 1
 }
 

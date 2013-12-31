@@ -31,12 +31,14 @@ type jsonWedOverlay struct {
 	Height        int
 	Name          string
 	Flags         int
-	Tilemap       []jsonWedTilemap `json:"-"`
-	Stencil       string           `json:",omitempty"`
-	Svg           string           `json:",omitempty"`
-	BackgroundImg image.Image      `json:"-"`
-	StencilImg    image.Image      `json:"-"`
-	ClosedImage   image.Image      `json:"-"`
+	Animations    []jsonWedAnimation `json:",omitempty"`
+	Tilemap       []jsonWedTilemap   `json:"-"`
+	Stencils      []string           `json:",omitempty"`
+	Svg           string             `json:",omitempty"`
+	BackgroundImg image.Image        `json:"-"`
+	ClosedImage   image.Image        `json:"-"`
+	StencilImages []image.Image      `json:"-"`
+	Tis           *Tis               `json:"-"`
 }
 
 type jsonWedTilemap struct {
@@ -46,6 +48,13 @@ type jsonWedTilemap struct {
 	Flags     int
 	AnimSpeed int
 	WFlags    int
+}
+
+type jsonWedAnimation struct {
+	X    int
+	Y    int
+	Name string
+	img  image.Image
 }
 
 type jsonWedDoor struct {
@@ -68,26 +77,24 @@ func (o *jsonWedOverlay) PixelHeight() int {
 	return o.Height * 64
 }
 
-func (o *jsonWedOverlay) TileImage(x int, y int, closed bool) *image.RGBA {
+func (o *jsonWedOverlay) TileImage(x int, y int) *image.RGBA {
+	return o.tileImage(x, y, o.BackgroundImg)
+}
+
+func (o *jsonWedOverlay) ClosedTileImage(x int, y int) *image.RGBA {
+	return o.tileImage(x, y, o.ClosedImage)
+}
+
+func (o *jsonWedOverlay) tileImage(x int, y int, imgIn image.Image) *image.RGBA {
 	rect := image.Rect(x*64, y*64, x*64+64, y*64+64)
 
 	img := image.NewRGBA(image.Rect(0, 0, 64, 64))
-	trans := color.RGBA{0, 255, 0, 255}
+	//trans := color.RGBA{0, 255, 0, 255}
 
 	for y := rect.Min.Y; y < rect.Max.Y; y++ {
 		for x := rect.Min.X; x < rect.Max.X; x++ {
-			var c color.Color
-			if closed {
-				c = o.ClosedImage.At(x, y)
-			} else {
-				c = o.BackgroundImg.At(x, y)
-			}
-			_, _, _, a := c.RGBA()
-			if a == 0 {
-				img.Set(x-rect.Min.X, y-rect.Min.Y, trans)
-			} else {
-				img.Set(x-rect.Min.X, y-rect.Min.Y, c)
-			}
+			c := imgIn.At(x, y)
+			img.Set(x-rect.Min.X, y-rect.Min.Y, c)
 		}
 	}
 
@@ -246,7 +253,7 @@ func (jw *JsonWed) Export(name string, dir string) error {
 			png.Encode(f, img)
 
 			f.Close()
-			overlay.Stencil = fmt.Sprintf("%s_overlay_%d", name, overlayIdx+1)
+			overlay.Stencils = append(overlay.Stencils, fmt.Sprintf("%s_overlay_%d", name, overlayIdx+1))
 
 		}
 	}
@@ -499,6 +506,81 @@ func (jw *JsonWed) GenerateWallPolys() ([]wedPolygon, []wedVertex, []uint16, []w
 	return wallPolys, wallVerts, wallIndices, wallGroups
 }
 
+func (o *jsonWedOverlay) GenerateTiles(x int, y int) ([]*image.RGBA, *image.RGBA, int) {
+	bounds := image.Rect(x*64, y*64, x*64+64, y*64+64)
+	var images []*image.RGBA
+	var stencilImg *image.RGBA
+	flags := 0
+
+	stencilId := -1
+	for idx, stencil := range o.StencilImages {
+		for y := bounds.Min.Y; y < bounds.Max.Y; y++ {
+			for x := bounds.Min.X; x < bounds.Max.X; x++ {
+				_, _, _, a := stencil.At(x, y).RGBA()
+				if a != 0 {
+					stencilId = idx
+					break
+				}
+			}
+		}
+	}
+
+	if stencilId >= 0 {
+		log.Printf("Have stencil for [%d,%d]\n", x, y)
+		images = make([]*image.RGBA, 1)
+		img := image.NewRGBA(image.Rect(0, 0, 64, 64))
+		draw.Draw(img, image.Rect(0, 0, 64, 64), o.BackgroundImg, bounds.Min, draw.Src)
+		images[0] = img
+		stencilImg = image.NewRGBA(image.Rect(0, 0, 64, 64))
+		//Find our right stencil
+		//if the stencil is 0 alpha, use background image chunk
+		//otherwise set to green
+		sBounds := stencilImg.Bounds()
+		for y := sBounds.Min.Y; y < sBounds.Max.Y; y++ {
+			for x := sBounds.Min.X; x < sBounds.Max.X; x++ {
+				c := o.StencilImages[stencilId].At(bounds.Min.X+x, bounds.Min.Y+y)
+				_, _, _, a := c.RGBA()
+				if a != 0 {
+					stencilImg.Set(x, y, color.RGBA{0, 255, 0, 255})
+					//stencilImg.Set(x, y, c) //images[0].At(x,y))
+				} else {
+					stencilImg.Set(x, y, color.RGBA{0, 255, 0, 255})
+					stencilImg.Set(x, y, images[0].At(x, y))
+				}
+				//stencilImg.Set(x, y, o.BackgroundImg.At(bounds.Min.X + x, bounds.Min.Y + y))
+				//} else {
+				//	stencilImg.Set(x, y, color.RGBA{0,255,0,255})
+				//}
+			}
+		}
+		flags = (1 << (uint(stencilId) + 1))
+
+	} else {
+		log.Printf("No stencil for [%d,%d]\n", x, y)
+		images = make([]*image.RGBA, 1)
+		img := image.NewRGBA(image.Rect(0, 0, 64, 64))
+		draw.Draw(img, image.Rect(0, 0, 64, 64), o.BackgroundImg, bounds.Min, draw.Src)
+		images[0] = img
+		stencilImg = nil
+		flags = 0
+	}
+
+	for _, anim := range o.Animations {
+		if anim.X == x && anim.Y == y {
+			bounds := anim.img.Bounds()
+			frames := (bounds.Max.X - bounds.Min.X) / 64
+			images = make([]*image.RGBA, 0)
+			for i := 0; i < frames; i++ {
+				img := image.NewRGBA(image.Rect(0, 0, 64, 64))
+				draw.Draw(img, image.Rect(0, 0, 64, 64), anim.img, image.Pt(i*64, 0), draw.Src)
+				images = append(images, img)
+			}
+		}
+	}
+
+	return images, stencilImg, flags
+}
+
 func (jw *JsonWed) ToWed() (*Wed, error) {
 	wed := Wed{}
 
@@ -514,8 +596,10 @@ func (jw *JsonWed) ToWed() (*Wed, error) {
 	wed.Overlays = make([]wedOverlay, len(jw.Overlays))
 	wed.Tilemaps = make([][]wedTilemap, len(jw.Overlays))
 	wed.TileIndices = make([]uint16, 0)
-	tis := NewTis()
+
 	for idx, overlay := range jw.Overlays {
+		stencilOffset := overlay.Width * overlay.Height
+		stencils := make([]*image.RGBA, 0)
 		o := &wed.Overlays[idx]
 		o.Width = uint16(overlay.Width)
 		o.Height = uint16(overlay.Height)
@@ -525,23 +609,34 @@ func (jw *JsonWed) ToWed() (*Wed, error) {
 		o.TileIndexLookupOffset = 0
 		wed.Tilemaps[idx] = make([]wedTilemap, len(overlay.Tilemap))
 		o.TilemapOffset = uint32(0)
+		jw.Overlays[idx].Tis = NewTis()
 
 		for y := 0; y < overlay.Height; y++ {
 			for x := 0; x < overlay.Width; x++ {
-				if idx == 0 {
-					tis.AddTile(overlay.TileImage(x, y, false))
-				}
 				tm := &wed.Tilemaps[idx][y*overlay.Width+x]
-				tm.AlternateTileIndex = -1
-				tm.TileIndexLookupIndex = uint16(y*overlay.Width + x)
-				tm.TileIndexLookupCount = 1
-				wed.TileIndices = append(wed.TileIndices, tm.TileIndexLookupIndex)
+
+				tiles, stencilImg, flags := overlay.GenerateTiles(x, y)
+				for _, tile := range tiles {
+					tileId := jw.Overlays[idx].Tis.AddTile(tile)
+					if idx == 0 {
+						tm.TileIndexLookupIndex = uint16(len(wed.TileIndices))
+					}
+					wed.TileIndices = append(wed.TileIndices, uint16(tileId))
+				}
+
+				tm.AlternateTileIndex = int16(-1)
+				tm.TileIndexLookupCount = uint16(len(tiles))
+				tm.Flags = byte(flags)
+				if stencilImg != nil {
+					stencils = append(stencils, stencilImg)
+					tm.AlternateTileIndex = int16(stencilOffset)
+					stencilOffset++
+				}
 			}
 		}
-
-		/*if overlay.Width * 64 < overlay.BackgroundImg.Bounds().Dx() || overlay.Height * 64 < overlay.BackgroundImg.Bounds().Dy() {
-			log.Printf("bigger then area: %s", overlay.Name)
-		}*/
+		for _, stencil := range stencils {
+			jw.Overlays[idx].Tis.AddTile(stencil)
+		}
 	}
 
 	wed.Polygons, wed.Vertices, wed.PolygonIndices, wed.WallGroups = jw.GenerateWallPolys()
@@ -575,7 +670,7 @@ func (jw *JsonWed) ToWed() (*Wed, error) {
 		for _, tileId := range effectedTiles {
 			y := tileId / jw.Overlays[0].Width
 			x := tileId % jw.Overlays[0].Width
-			altTile := tis.AddTile(jw.Overlays[0].TileImage(x, y, true))
+			altTile := jw.Overlays[0].Tis.AddTile(jw.Overlays[0].ClosedTileImage(x, y))
 			tm := &wed.Tilemaps[idx][tileId]
 			tm.AlternateTileIndex = int16(altTile)
 			wed.DoorTileCells = append(wed.DoorTileCells, uint16(tileId))
@@ -584,15 +679,17 @@ func (jw *JsonWed) ToWed() (*Wed, error) {
 
 	wed.UpdateOffsets()
 
-	f, err := os.Create(fmt.Sprintf("%s.tis", jw.Overlays[0].Name))
-	if err != nil {
-		return nil, err
-	}
-	defer f.Close()
+	for _, overlay := range jw.Overlays {
+		f, err := os.Create(fmt.Sprintf("%s.tis", overlay.Name))
+		if err != nil {
+			return nil, err
+		}
+		defer f.Close()
 
-	err = tis.Write(f)
-	if err != nil {
-		return nil, err
+		err = overlay.Tis.Write(f)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	return &wed, nil
@@ -617,18 +714,34 @@ func (jw *JsonWed) importImages() error {
 			f.Close()
 
 		}
-		if overlay.Stencil != "" {
-			f, err := os.Open(overlay.Stencil + ".png")
+		for _, stencil := range overlay.Stencils {
+			f, err := os.Open(stencil + ".png")
 			if err != nil {
 				return err
 			}
 
-			stencil, err := png.Decode(f)
+			stencilImg, err := png.Decode(f)
 			if err != nil {
 				return err
 			}
 
-			overlay.StencilImg = stencil
+			overlay.StencilImages = append(overlay.StencilImages, stencilImg)
+
+			f.Close()
+		}
+		for idx, _ := range overlay.Animations {
+			animation := &overlay.Animations[idx]
+			f, err := os.Open(animation.Name + ".png")
+			if err != nil {
+				return err
+			}
+
+			animationImg, err := png.Decode(f)
+			if err != nil {
+				return err
+			}
+
+			animation.img = animationImg
 
 			f.Close()
 		}
