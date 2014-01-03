@@ -506,7 +506,7 @@ func (jw *JsonWed) GenerateWallPolys() ([]wedPolygon, []wedVertex, []uint16, []w
 	return wallPolys, wallVerts, wallIndices, wallGroups
 }
 
-func (o *jsonWedOverlay) GenerateTiles(x int, y int) ([]*image.RGBA, *image.RGBA, int) {
+func (o *jsonWedOverlay) GenerateTiles(x int, y int, closed bool) ([]*image.RGBA, *image.RGBA, int) {
 	bounds := image.Rect(x*64, y*64, x*64+64, y*64+64)
 	var images []*image.RGBA
 	var stencilImg *image.RGBA
@@ -526,15 +526,16 @@ func (o *jsonWedOverlay) GenerateTiles(x int, y int) ([]*image.RGBA, *image.RGBA
 	}
 
 	if stencilId >= 0 {
-		log.Printf("Have stencil for [%d,%d]\n", x, y)
 		images = make([]*image.RGBA, 1)
 		img := image.NewRGBA(image.Rect(0, 0, 64, 64))
-		draw.Draw(img, image.Rect(0, 0, 64, 64), o.BackgroundImg, bounds.Min, draw.Src)
+		if closed {
+			draw.Draw(img, image.Rect(0, 0, 64, 64), o.BackgroundImg, bounds.Min, draw.Src)
+			draw.Draw(img, image.Rect(0, 0, 64, 64), o.ClosedImage, bounds.Min, draw.Over)
+		} else {
+			draw.Draw(img, image.Rect(0, 0, 64, 64), o.BackgroundImg, bounds.Min, draw.Src)
+		}
 		images[0] = img
 		stencilImg = image.NewRGBA(image.Rect(0, 0, 64, 64))
-		//Find our right stencil
-		//if the stencil is 0 alpha, use background image chunk
-		//otherwise set to green
 		sBounds := stencilImg.Bounds()
 		for y := sBounds.Min.Y; y < sBounds.Max.Y; y++ {
 			for x := sBounds.Min.X; x < sBounds.Max.X; x++ {
@@ -542,24 +543,22 @@ func (o *jsonWedOverlay) GenerateTiles(x int, y int) ([]*image.RGBA, *image.RGBA
 				_, _, _, a := c.RGBA()
 				if a != 0 {
 					stencilImg.Set(x, y, color.RGBA{0, 255, 0, 255})
-					//stencilImg.Set(x, y, c) //images[0].At(x,y))
 				} else {
 					stencilImg.Set(x, y, color.RGBA{0, 255, 0, 255})
 					stencilImg.Set(x, y, images[0].At(x, y))
 				}
-				//stencilImg.Set(x, y, o.BackgroundImg.At(bounds.Min.X + x, bounds.Min.Y + y))
-				//} else {
-				//	stencilImg.Set(x, y, color.RGBA{0,255,0,255})
-				//}
 			}
 		}
 		flags = (1 << (uint(stencilId) + 1))
 
 	} else {
-		log.Printf("No stencil for [%d,%d]\n", x, y)
 		images = make([]*image.RGBA, 1)
 		img := image.NewRGBA(image.Rect(0, 0, 64, 64))
-		draw.Draw(img, image.Rect(0, 0, 64, 64), o.BackgroundImg, bounds.Min, draw.Src)
+		if closed {
+			draw.Draw(img, image.Rect(0, 0, 64, 64), o.ClosedImage, bounds.Min, draw.Src)
+		} else {
+			draw.Draw(img, image.Rect(0, 0, 64, 64), o.BackgroundImg, bounds.Min, draw.Src)
+		}
 		images[0] = img
 		stencilImg = nil
 		flags = 0
@@ -615,7 +614,7 @@ func (jw *JsonWed) ToWed() (*Wed, error) {
 			for x := 0; x < overlay.Width; x++ {
 				tm := &wed.Tilemaps[idx][y*overlay.Width+x]
 
-				tiles, stencilImg, flags := overlay.GenerateTiles(x, y)
+				tiles, stencilImg, flags := overlay.GenerateTiles(x, y, false)
 				for _, tile := range tiles {
 					tileId := jw.Overlays[idx].Tis.AddTile(tile)
 					if idx == 0 {
@@ -670,7 +669,13 @@ func (jw *JsonWed) ToWed() (*Wed, error) {
 		for _, tileId := range effectedTiles {
 			y := tileId / jw.Overlays[0].Width
 			x := tileId % jw.Overlays[0].Width
-			altTile := jw.Overlays[0].Tis.AddTile(jw.Overlays[0].ClosedTileImage(x, y))
+			tiles, stencil, _ := jw.Overlays[0].GenerateTiles(x, y, true)
+			altTile := 0
+			if stencil != nil {
+				altTile = jw.Overlays[0].Tis.AddTile(stencil)
+			} else {
+				altTile = jw.Overlays[0].Tis.AddTile(tiles[0])
+			}
 			tm := &wed.Tilemaps[idx][tileId]
 			tm.AlternateTileIndex = int16(altTile)
 			wed.DoorTileCells = append(wed.DoorTileCells, uint16(tileId))
