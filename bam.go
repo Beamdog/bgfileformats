@@ -2,6 +2,7 @@ package bg
 
 import (
 	"bytes"
+	"math"
 	"compress/zlib"
 	"encoding/binary"
 	"fmt"
@@ -599,50 +600,61 @@ func (bam *BAM) MakeBamd(output string, name string, mirror bool, offset_x int, 
 func (bam *BAM) MakeSpriteSheet(w io.Writer) {
 	size := image.Point{0, 0}
 
-	for _, frame := range bam.Frames {
-		if size.X < int(frame.Width)+int(frame.CenterX) {
-			size.X = int(frame.Width) + int(frame.CenterX)
+	fmt.Printf("{\"frames\": [\n")
+
+	numFramesX := int(math.Sqrt(float64(len(bam.Frames))))
+	seqSize := image.Point{0,0}
+	for idx, f := range bam.Frames {
+		seqSize.X += int(f.Width)
+		if int(f.Height) > seqSize.Y {
+			seqSize.Y = int(f.Height)
 		}
-		if size.Y < int(frame.Height)+int(frame.CenterY) {
-			size.Y = int(frame.Width) + int(frame.CenterY)
+		if (idx+1) % numFramesX == 0 {
+			size.Y += seqSize.Y
+			if seqSize.X > size.X {
+				size.X = seqSize.X
+			}
+			seqSize = image.Point{0,0}
 		}
 	}
+
 	size.X = int(next_pow_two(uint(size.X)))
 	size.Y = int(next_pow_two(uint(size.Y)))
-	maxSeq := 0
-	for _, seq := range bam.Sequences {
-		if int(seq.Count) > maxSeq {
-			maxSeq = int(seq.Count)
-		}
-	}
-	min := size.X
-	if size.Y > min {
-		min = size.Y
-	}
-	size.X = min
-	size.Y = min
-	log.Printf("Size %+v\n", size)
-	i := image.NewPaletted(image.Rect(0, 0, size.X*(maxSeq+1), size.Y*(len(bam.Sequences)+1)), bam.Image[0].Palette)
-	for idx, seq := range bam.Sequences {
-		y := idx * size.Y
-		for v := seq.Start; v < seq.Start+seq.Count; v++ {
-			x := int(v-seq.Start) * size.X
-			seqToImage := bam.SequenceToImage[v]
-			if seqToImage >= 0 {
-				img := &bam.Image[seqToImage]
-				frame := bam.Frames[seqToImage]
-				offsetX := size.X/2 - int(frame.Width)/2 + int(frame.CenterX)
-				offsetY := size.Y/2 - int(frame.Height)/2 + int(frame.CenterY)
-				drawRect := image.Rect(
-					x+offsetX,
-					y+offsetY,
-					x+offsetX+int(frame.Width),
-					y+offsetY+int(frame.Height),
-				)
+	i := image.NewPaletted(image.Rect(0, 0, size.X, size.Y), bam.Image[0].Palette)
+	maxY := 0
+	y := 1
+	x := 1
+	lastFrame := len(bam.Frames)-1
+	for idx, frame := range bam.Frames {
+		maxY = 0
+		img := &bam.Image[idx]
+		drawRect := image.Rect(
+			x,
+			y,
+			x+int(frame.Width),
+			y+int(frame.Height),
+		)
 
-				draw.Draw(i, drawRect, img, image.Point{0, 0}, draw.Src)
-			}
+		draw.Draw(i, drawRect, img, image.Point{0, 0}, draw.Src)
+
+		fmt.Printf("\t{\"filename\": \"frame_%d\", \"frame\": {\"x\":%d,\"y\":%d,\"w\":%d,\"h\":%d},\"rotated\": false,\"trimmed\":true,\"spriteSourceSize\": {\"x\":%d,\"y\":%d,\"w\":%d,\"h\":%d}, \"sourceSize\": {\"w\":%d,\"h\":%d}}", idx, drawRect.Min.X, drawRect.Min.Y, drawRect.Dx(), drawRect.Dy(), -1 * frame.CenterX, -1 * frame.CenterY, frame.Width, frame.Height, frame.Width, frame.Height)
+		x += int(frame.Width) + 2
+
+		if int(frame.Height) > maxY {
+			maxY = int(frame.Height)
+		}
+		if (idx + 1) % numFramesX == 0 {
+			y += maxY
+			maxY = 0
+			x = 1
+		}
+		if idx != lastFrame {
+			fmt.Printf(",\n")
+		} else {
+			fmt.Printf("\n")
 		}
 	}
+	i.Palette[0] = color.RGBA{0,0,0,0}
+	fmt.Printf("]}\n")
 	png.Encode(w, i)
 }
