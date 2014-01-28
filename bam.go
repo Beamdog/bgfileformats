@@ -3,6 +3,7 @@ package bg
 import (
 	"bytes"
 	"math"
+	"sort"
 	"compress/zlib"
 	"encoding/binary"
 	"fmt"
@@ -558,7 +559,25 @@ func rleBam(pix []uint8, rleKey uint8) []byte {
 }
 
 func (bam *BAM) MakeBamd(output string, name string, mirror bool, offset_x int, offset_y int) {
-	for idx, frame := range bam.Frames {
+	usedFrames := map[int]bool{}
+
+	for _, seq := range bam.Sequences {
+		for v := seq.Start; v < seq.Start+seq.Count; v++ {
+			frame := bam.SequenceToImage[v]
+			usedFrames[int(frame)] = true
+		}
+	}
+
+	frames := make([]int, len(usedFrames))
+	i := 0
+	for k, _ := range usedFrames {
+		frames[i] = k
+		i++
+	}
+	sort.Ints(frames)
+
+	for _, idx := range frames {
+		frame := bam.Frames[idx]
 		pathname := strings.Replace(path.Join(output, fmt.Sprintf("%s_%03d.png", name, idx)), "\\", "/", -1)
 		if mirror {
 			fmt.Printf("frame f%05d \"%s\" %d %d\n", idx, pathname, int(frame.Width)-int(frame.CenterX)+offset_x, int(frame.CenterY)+offset_y)
@@ -590,7 +609,7 @@ func (bam *BAM) MakeBamd(output string, name string, mirror bool, offset_x int, 
 		f.Close()
 	}
 	fmt.Printf("\n\n")
-	for _, seq := range bam.Sequences {
+	for idx, seq := range bam.Sequences {
 		fmt.Printf("sequence ")
 		for v := seq.Start; v < seq.Start+seq.Count; v++ {
 			frame := bam.SequenceToImage[v]
@@ -598,7 +617,7 @@ func (bam *BAM) MakeBamd(output string, name string, mirror bool, offset_x int, 
 				fmt.Printf("f%05d ", bam.SequenceToImage[v])
 			}
 		}
-		fmt.Printf("\n")
+		fmt.Printf(" // SEQ %d\n", idx)
 	}
 }
 func (bam *BAM) MakeSpriteSheet(w io.Writer) {
