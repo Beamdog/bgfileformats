@@ -261,7 +261,7 @@ func (jw *JsonWed) Export(name string, dir string) error {
 	if len(jw.Doors) > 0 {
 		img := image.NewRGBA(image.Rect(0, 0, jw.Overlays[0].PixelWidth(), jw.Overlays[0].PixelHeight()))
 		for _, door := range jw.Doors {
-			tiles := door.EffectedTiles(image.Point{jw.Overlays[0].PixelWidth(), jw.Overlays[0].PixelHeight()})
+			tiles := door.EffectedTiles(image.Point{jw.Overlays[0].PixelWidth(), jw.Overlays[0].PixelHeight()}, &jw.Overlays[0])
 			for _, tile := range tiles {
 				X, Y := 64*(tile%jw.Overlays[0].Width), 64*(tile/jw.Overlays[0].Width)
 				tileBounds := image.Rect(0, 0, 64, 64)
@@ -430,21 +430,53 @@ func (poly *jsonWedPolygon) ToWedPoly() (wedPolygon, []wedVertex) {
 	return wedPoly, verts
 }
 
-func (door *jsonWedDoor) EffectedTiles(pt image.Point) []int {
-	out := make(map[int]struct{})
+func same_color(a, b color.Color) bool {
+	r1,g1,b1,a1 := a.RGBA()
+	r2,g2,b2,a2 := b.RGBA()
+
+	return r1 == r2 && g1 == g2 && b1 == b2 && a1 == a2
+}
+
+func (o *jsonWedOverlay) TilesDiffer(tileId int) bool {
+	y := tileId / o.Width
+	x := tileId % o.Width
+
+	bounds := image.Rect(x*64, y*64, x*64+64, y*64+64)
+
+	for y := bounds.Min.Y; y <= bounds.Max.Y; y++ {
+		for x := bounds.Min.X; x <= bounds.Max.X; x++ {
+			if !same_color(o.ClosedImage.At(x,y), o.BackgroundImg.At(x,y)) {
+				r1,g1,b1,a1 := o.ClosedImage.At(x,y).RGBA()
+				r2,g2,b2,a2 := o.BackgroundImg.At(x,y).RGBA()
+				log.Printf("C1[ %d, %d, %d, %d ], C2[ %d, %d, %d, %d]\n", r1, g1, b1, a1, r2, g2, b2, a2)
+				return true
+			}
+		}
+	}
+
+	return false
+}
+
+func (door *jsonWedDoor) EffectedTiles(pt image.Point, overlay *jsonWedOverlay) []int {
+	out := make(map[int]bool)
 
 	for _, poly := range door.PolygonsOpen {
 		tiles := poly.EffectedTiles(pt)
 		for _, val := range tiles {
-			out[val] = struct{}{}
+			if overlay.TilesDiffer(val) {
+				out[val] = true
+			}
 		}
 	}
 	for _, poly := range door.PolygonsClosed {
 		tiles := poly.EffectedTiles(pt)
 		for _, val := range tiles {
-			out[val] = struct{}{}
+			if overlay.TilesDiffer(val) {
+				out[val] = true
+			}
 		}
 	}
+	log.Printf("Tiles: %+v\n", out)
 
 	ints := make([]int, len(out))
 	i := 0
@@ -513,24 +545,28 @@ func (o *jsonWedOverlay) GenerateTiles(x int, y int, closed bool) ([]*image.RGBA
 	flags := 0
 
 	stencilId := -1
-	for idx, stencil := range o.StencilImages {
-		for y := bounds.Min.Y; y < bounds.Max.Y; y++ {
-			for x := bounds.Min.X; x < bounds.Max.X; x++ {
-				_, _, _, a := stencil.At(x, y).RGBA()
-				if a != 0 {
-					stencilId = idx
-					break
+	alphaCount := 0
+	// Dont try to check for stencils for closed images
+	if !closed {
+		for idx, stencil := range o.StencilImages {
+			for y := bounds.Min.Y; y < bounds.Max.Y; y++ {
+				for x := bounds.Min.X; x < bounds.Max.X; x++ {
+					_, _, _, a := stencil.At(x, y).RGBA()
+					if a != 0 {
+						stencilId = idx
+						alphaCount++
+					}
 				}
 			}
 		}
 	}
 
-	if stencilId >= 0 {
+
+	if stencilId >= 0 && alphaCount != 4096 {
 		images = make([]*image.RGBA, 1)
 		img := image.NewRGBA(image.Rect(0, 0, 64, 64))
 		if closed {
-			draw.Draw(img, image.Rect(0, 0, 64, 64), o.BackgroundImg, bounds.Min, draw.Src)
-			draw.Draw(img, image.Rect(0, 0, 64, 64), o.ClosedImage, bounds.Min, draw.Over)
+			draw.Draw(img, image.Rect(0, 0, 64, 64), o.ClosedImage, bounds.Min, draw.Src)
 		} else {
 			draw.Draw(img, image.Rect(0, 0, 64, 64), o.BackgroundImg, bounds.Min, draw.Src)
 		}
@@ -561,7 +597,13 @@ func (o *jsonWedOverlay) GenerateTiles(x int, y int, closed bool) ([]*image.RGBA
 		}
 		images[0] = img
 		stencilImg = nil
-		flags = 0
+
+		// Fully transparent water section
+		if stencilId >= 0 && alphaCount == 4096 {
+			flags = (1 << (uint(stencilId) + 1))
+		} else {
+			flags = 0
+		}
 	}
 
 	for _, anim := range o.Animations {
@@ -648,7 +690,7 @@ func (jw *JsonWed) ToWed() (*Wed, error) {
 		d.Name = NewResref(door.Name)
 		d.State = uint16(door.State)
 		d.DoorTileCellIndex = uint16(doorTileCellIndex)
-		effectedTiles := door.EffectedTiles(image.Point{jw.Overlays[0].PixelWidth(), jw.Overlays[0].PixelHeight()})
+		effectedTiles := door.EffectedTiles(image.Point{jw.Overlays[0].PixelWidth(), jw.Overlays[0].PixelHeight()}, &jw.Overlays[0])
 		d.DoorTileCellCount = uint16(len(effectedTiles))
 		doorTileCellIndex += len(effectedTiles)
 		d.PolygonOpenCount = uint16(len(door.PolygonsOpen))
@@ -706,11 +748,13 @@ func (jw *JsonWed) importImages() error {
 		if overlay.Name != "" {
 			f, err := os.Open(overlay.Name + ".png")
 			if err != nil {
+				log.Printf("Unable to open overlay png: " + overlay.Name + ".png")
 				return err
 			}
 
 			img, err := png.Decode(f)
 			if err != nil {
+				log.Printf("unable to decode overlay png")
 				return err
 			}
 
@@ -722,11 +766,13 @@ func (jw *JsonWed) importImages() error {
 		for _, stencil := range overlay.Stencils {
 			f, err := os.Open(stencil + ".png")
 			if err != nil {
+				log.Printf("Unable to open stencil png: " + stencil + ".png")
 				return err
 			}
 
 			stencilImg, err := png.Decode(f)
 			if err != nil {
+				log.Printf("unable to decode stencil png")
 				return err
 			}
 
@@ -754,11 +800,13 @@ func (jw *JsonWed) importImages() error {
 
 	f, err := os.Open(jw.Overlays[0].Name + "c.png")
 	if err != nil && !os.IsNotExist(err) {
+		log.Printf("Unable to open closed png:" + jw.Overlays[0].Name + "c.png")
 		return err
 	}
 
 	closed, err := png.Decode(f)
 	if err != nil {
+		log.Printf("Unable to load decode closed png")
 		return err
 	}
 	jw.Overlays[0].ClosedImage = closed
@@ -827,21 +875,26 @@ func OpenJWed(r io.ReadSeeker) (*JsonWed, error) {
 	jwed := JsonWed{}
 	jsonBlob, err := ioutil.ReadAll(r)
 	if err != nil {
+		log.Printf("unable to read json")
 		return nil, err
 	}
 	if err = json.Unmarshal(jsonBlob, &jwed); err != nil {
+		log.Printf("unable to unmarshal json")
 		return nil, err
 	}
 
 	if err = jwed.importSvg(); err != nil {
+		log.Printf("unable to import svg")
 		return nil, err
 	}
 
 	if err = jwed.importImages(); err != nil {
+		log.Printf("unable to import images")
 		return nil, err
 	}
 
 	if err = jwed.generateTilemaps(); err != nil {
+		log.Printf("unable to generate tilemaps")
 		return nil, err
 	}
 
