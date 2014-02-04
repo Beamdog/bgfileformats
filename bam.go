@@ -233,11 +233,12 @@ func (d *decoder) decode(r io.Reader, configOnly bool) error {
 	binary.Read(bamFile, binary.LittleEndian, &d.FrameLUT)
 
 	for _, frame := range d.Frames {
-		img := image.NewPaletted(image.Rect(0, 0, int(frame.Width), int(frame.Height)), d.colorMap)
 		if frame.Width == 0 || frame.Height == 0 {
+			img := image.NewPaletted(image.Rect(0, 0, 1, 1), d.colorMap)
 			d.image = append(d.image, *img)
 			continue
 		}
+		img := image.NewPaletted(image.Rect(0, 0, int(frame.Width), int(frame.Height)), d.colorMap)
 		// uncompressed
 		if frame.FrameOffset&0x80000000 != 0 {
 			bamFile.Seek(int64(frame.FrameOffset&0x7FFFFFFF), 0)
