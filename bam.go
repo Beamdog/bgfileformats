@@ -137,7 +137,7 @@ func (d *decoder) decode_bamd(r io.Reader) error {
 		} else if strings.ToLower(s.TokenText()) == "sequence" {
 			frames := make([]string, 0)
 			sequences := make([]uint16, 0)
-			for tok = s.Scan(); s.TokenText() != "\n"; tok = s.Scan() {
+			for tok = s.Scan(); !(s.TokenText() == "\n" || s.TokenText() =="\r"); tok = s.Scan() {
 				frame := strings.TrimSpace(s.TokenText())
 				frames = append(frames, frame)
 				sequences = append(sequences, uint16(frameNames[frame]))
