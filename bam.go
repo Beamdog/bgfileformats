@@ -306,6 +306,7 @@ func OpenBAMD(r io.ReadSeeker, palettePath string) (*BAM, error) {
 		Frames:          d.Frames,
 		Palette:         d.colorMap,
 	}
+	bam.RebuildSequencesAndDropFrames()
 	if _, err := os.Stat(palettePath); err == nil {
 		log.Printf("Using palette at: %s\n", palettePath)
 		paletteFile, err := os.Open(palettePath)
@@ -621,6 +622,38 @@ func (bam *BAM) MakeBamd(output string, name string, mirror bool, offset_x int, 
 		fmt.Printf(" // SEQ %d\n", idx)
 	}
 }
+
+
+func (bam *BAM) RebuildSequencesAndDropFrames() {
+	foundFrames := map[int]bool{}
+
+	for _, seq := range bam.Sequences {
+		for v := seq.Start; v < seq.Start + seq.Count; v++ {
+			foundFrames[int(bam.SequenceToImage[v])] = true
+		}
+	}
+
+	newFrames := make([]BamFrame, 0)
+	newImages := make([]image.Paletted, 0)
+	for idx, _ := range bam.Frames {
+		found,ok := foundFrames[idx]
+		if found && ok {
+			newFrames = append(newFrames, bam.Frames[idx])
+			newImages = append(newImages, bam.Image[idx])
+		} else {
+			log.Printf("dropping frame: %d\n", idx)
+			for i, val := range bam.SequenceToImage {
+				if int(val) >= idx {
+					bam.SequenceToImage[i] = val - 1
+				}
+			}
+		}
+	}
+	bam.Image = newImages
+	bam.Frames = newFrames
+}
+
+
 func (bam *BAM) MakeSpriteSheet(w io.Writer) {
 	size := image.Point{0, 0}
 
