@@ -646,7 +646,7 @@ func (jw *JsonWed) ToWed() (*Wed, error) {
 		o.Height = uint16(overlay.Height)
 		o.Name = NewResref(overlay.Name)
 		o.NumUniqueTiles = 0
-		o.LayerFlags = 0
+		o.LayerFlags = uint16(overlay.Flags)
 		o.TileIndexLookupOffset = 0
 		wed.Tilemaps[idx] = make([]wedTilemap, len(overlay.Tilemap))
 		o.TilemapOffset = uint32(0)
