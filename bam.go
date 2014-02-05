@@ -635,6 +635,7 @@ func (bam *BAM) RebuildSequencesAndDropFrames() {
 
 	newFrames := make([]BamFrame, 0)
 	newImages := make([]image.Paletted, 0)
+	framesRemoved := 1
 	for idx, _ := range bam.Frames {
 		found,ok := foundFrames[idx]
 		if found && ok {
@@ -643,10 +644,12 @@ func (bam *BAM) RebuildSequencesAndDropFrames() {
 		} else {
 			log.Printf("dropping frame: %d\n", idx)
 			for i, val := range bam.SequenceToImage {
-				if int(val) >= idx {
-					bam.SequenceToImage[i] = val - 1
+				if int(val) > idx - framesRemoved  {
+					//log.Printf("S2I[%d] is %d changing to %d Idx is: %d\n", i, val, int(val) - 1, idx)
+					bam.SequenceToImage[i] = int16(int(val) - 1)
 				}
 			}
+			framesRemoved++
 		}
 	}
 	bam.Image = newImages
