@@ -107,11 +107,11 @@ func (d *decoder) decode_bamd(r io.Reader) error {
 			}
 			imgFile, err := os.Open(filepath.Clean(path))
 			if err != nil {
-				return err
+				return fmt.Errorf("Unable to open %s: %v", filepath.Clean(path), err)
 			}
 			img, err := png.Decode(imgFile)
 			if err != nil {
-				return err
+				return fmt.Errorf("Unable to decode png %s: %v", filepath.Clean(path), err)
 			}
 			imgFile.Close()
 
@@ -170,7 +170,7 @@ func (d *decoder) decode_bamd(r io.Reader) error {
 func (d *decoder) decode(r io.Reader, configOnly bool) error {
 	data, err := ioutil.ReadAll(r)
 	if err != nil {
-		log.Fatal("err", err)
+		return fmt.Errorf("Unable to read bam: %v", err)
 	}
 	bamFile := bytes.NewReader(data)
 	binary.Read(bamFile, binary.LittleEndian, &d.Header)
@@ -179,7 +179,7 @@ func (d *decoder) decode(r io.Reader, configOnly bool) error {
 		bamFile.Seek(0x0C, os.SEEK_SET)
 		r, err := zlib.NewReader(bamFile)
 		if err != nil {
-			log.Fatal("err", err)
+			return fmt.Errorf("Unable to zlib decompress BAMC file: %v", err)
 		}
 		uncompressed, err := ioutil.ReadAll(r)
 		bamFile = bytes.NewReader(uncompressed)
@@ -188,7 +188,7 @@ func (d *decoder) decode(r io.Reader, configOnly bool) error {
 	}
 
 	if string(d.Header.Signature[0:]) != "BAM " {
-		log.Fatal("Not a bam")
+		return fmt.Errorf("First 4 bytes not BAM ")
 	}
 
 	d.Frames = make([]BamFrame, uint64(d.Header.Frames))
@@ -196,7 +196,7 @@ func (d *decoder) decode(r io.Reader, configOnly bool) error {
 	bamFile.Seek(int64(d.Header.FrameOffset), 0)
 	err = binary.Read(bamFile, binary.LittleEndian, &d.Frames)
 	if err != nil {
-		log.Fatal("Err: ", err)
+		return fmt.Errorf("Unable to read frames from bam")
 	}
 	for _, frame := range d.Frames {
 		if d.width < int(frame.Width)+int(frame.CenterX)*2 {
@@ -311,13 +311,13 @@ func OpenBAMD(r io.ReadSeeker, palettePath string) (*BAM, error) {
 		log.Printf("Using palette at: %s\n", palettePath)
 		paletteFile, err := os.Open(palettePath)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("Unable to open palette %s: %v", palettePath, err)
 		}
 		defer paletteFile.Close()
 
 		palette_template_img, err := png.Decode(paletteFile)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("Unable to decode png %s: %v", palettePath, err)
 		}
 		bam.Palette = palette_template_img.ColorModel().(color.Palette)
 	}
@@ -425,7 +425,7 @@ func (bam *BAM) MakeGif(outputPath string, name string) error {
 			}
 			outFile, err := os.Create(pathname)
 			if err != nil {
-				return err
+				return fmt.Errorf("Unable to create file %s: %v", pathname, err)
 			}
 			gif.EncodeAll(outFile, &g)
 
@@ -466,7 +466,7 @@ func (bam *BAM) MakeBam(wRaw io.Writer) error {
 
 	err := binary.Write(w, binary.LittleEndian, header)
 	if err != nil {
-		return err
+		return fmt.Errorf("Unable to write header: %v", err)
 	}
 
 	if bamrle {
@@ -530,7 +530,7 @@ func (bam *BAM) MakeBam(wRaw io.Writer) error {
 
 		_, err := wRaw.Write(data.Bytes())
 		if err != nil {
-			return err
+			return fmt.Errorf("Unable to write compressed data to BAMC: %v", err)
 		}
 	}
 
@@ -602,7 +602,7 @@ func (bam *BAM) MakeBamd(output string, name string, mirror bool, offset_x int, 
 		}
 		f, err := os.Create(pathname)
 		if err != nil {
-			log.Fatal(err)
+			log.Fatalf("Unable to create %s: %v", pathname, err)
 		}
 
 		//var pi image.PalettedImage
