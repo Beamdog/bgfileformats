@@ -2,7 +2,6 @@ package bg
 
 import (
 	"bytes"
-	"log"
 	"testing"
 )
 

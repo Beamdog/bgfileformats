@@ -89,6 +89,7 @@ type decoder struct {
 
 func (d *decoder) decode_bamd(r io.Reader) error {
 	var s scanner.Scanner
+	var err error
 	s.Init(r)
 	s.Whitespace = 1<<'\t' | 1<<' '
 	frameNames := map[string]int{}
@@ -101,9 +102,25 @@ func (d *decoder) decode_bamd(r io.Reader) error {
 			path := strings.Trim(s.TokenText(), "\"")
 			tok = s.Scan()
 			if s.TokenText() != "\n" {
-				center_x, _ = strconv.Atoi(s.TokenText())
+				neg_x := 1
+				neg_y := 1
+				if s.TokenText() == "-" {
+					neg_x = -1
+					s.Scan()
+				}
+				if center_x, err = strconv.Atoi(s.TokenText()); err != nil {
+					return fmt.Errorf("Error converting %s to an int: %v", s.TokenText(), err)
+				}
+				center_x *= neg_x
 				tok = s.Scan()
-				center_y, _ = strconv.Atoi(s.TokenText())
+				if s.TokenText() == "-" {
+					neg_y = -1
+					s.Scan()
+				}
+				if center_y, err = strconv.Atoi(s.TokenText()); err != nil {
+					return fmt.Errorf("Error converting %s to an int: %v", s.TokenText(), err)
+				}
+				center_y *= neg_y
 			}
 			imgFile, err := os.Open(filepath.Clean(path))
 			if err != nil {
