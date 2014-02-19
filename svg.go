@@ -48,25 +48,7 @@ type SvgFile struct {
 	Groups  []svgGroup `xml:"g"`
 }
 
-func scanTwoInts(s scanner.Scanner) (int, int) {
-	s.Scan()
-	X, err := strconv.ParseFloat(s.TokenText(), 32)
-	if err != nil {
-		log.Printf("Error: %+v\n", err)
-	}
-	s.Scan() // comma between values
-	s.Scan()
-	Y, err := strconv.ParseFloat(s.TokenText(), 32)
-	if err != nil {
-		log.Printf("Error: %+v\n", err)
-	}
-	return int(X), int(Y)
-}
-func scanOneInt(s scanner.Scanner) int {
-	s.Scan()
-	X, _ := strconv.Atoi(s.TokenText())
-	return X
-}
+
 
 func (path *svgPath) mode() int {
 	var settingRegexp = regexp.MustCompile(`([a-zA-Z]+)\:([ 0-9]+)`)
@@ -94,63 +76,128 @@ func (poly *svgPolygon) JsonPoly() jsonWedPolygon {
 	return wall
 }
 
-func (path *svgPath) generatePath() {
-	var s scanner.Scanner
-	s.Init(strings.NewReader(path.D))
-	s.Mode = scanner.ScanFloats | scanner.ScanChars
 
-	var curPoly *svgPolygon
-	cursor := svgVert{0, 0}
-	tok := s.Scan()
-	for tok != scanner.EOF {
-		switch s.TokenText() {
-		case "M":
-			poly := svgPolygon{Mode: path.mode()}
-			curPoly = &poly
+type svgPathScanner struct {
+	Path string
+	Polygons []svgPolygon
+	CurrentPolygon *svgPolygon
+	Cursor svgVert
+	Mode int
+	S scanner.Scanner
+}
 
-			cursor.X, cursor.Y = scanTwoInts(s)
+func NewPathScanner(path string, mode int) svgPathScanner {
+	log.Printf("Scanner path: %s\n", path)
+	sps := svgPathScanner{Path: path, Mode: mode}
+	return sps
+}
 
-			curPoly.Points = append(curPoly.Points, cursor)
-		case "m":
-			poly := svgPolygon{Mode: path.mode()}
-			curPoly = &poly
+func (sps *svgPathScanner) scanTwoInts() (int, int) {
+	X := sps.scanOneInt()
+	sps.scanWhitespace()
+	Y := sps.scanOneInt()
+	log.Printf("X: %d Y: %d\n", X, Y)
+	return X, Y
+}
 
-			X, Y := scanTwoInts(s)
-			cursor.X += X
-			cursor.Y += Y
-
-			curPoly.Points = append(curPoly.Points, cursor)
-		case "L":
-			cursor.X, cursor.Y = scanTwoInts(s)
-
-			curPoly.Points = append(curPoly.Points, cursor)
-		case "l":
-			X, Y := scanTwoInts(s)
-			cursor.X += X
-			cursor.Y += Y
-
-			curPoly.Points = append(curPoly.Points, cursor)
-		case "H":
-			cursor.X = scanOneInt(s)
-			curPoly.Points = append(curPoly.Points, cursor)
-		case "h":
-			cursor.X += scanOneInt(s)
-			curPoly.Points = append(curPoly.Points, cursor)
-		case "V":
-			cursor.Y = scanOneInt(s)
-			curPoly.Points = append(curPoly.Points, cursor)
-		case "v":
-			cursor.Y += scanOneInt(s)
-			curPoly.Points = append(curPoly.Points, cursor)
-		case "z":
-			path.Polygons = append(path.Polygons, *curPoly)
-			curPoly = nil
-		case "Z":
-			path.Polygons = append(path.Polygons, *curPoly)
-			curPoly = nil
-		}
-		tok = s.Scan()
+func (sps *svgPathScanner)scanWhitespace() {
+	for r := sps.S.Peek(); (r == ' ' || r == ','); r = sps.S.Peek() {
+		r = sps.S.Next()
 	}
+}
+
+func (sps *svgPathScanner)scanOneInt() int {
+	r := sps.S.Scan()
+
+	sign := 1
+	if r == '-' {
+		sps.S.Scan()
+		sign = -1
+	}
+	X, _ := strconv.ParseFloat(sps.S.TokenText(), 32)
+	return int(X) * sign
+}
+
+func (sps svgPathScanner) GeneratePolygons() ([]svgPolygon, error) {
+	sps.S.Init(strings.NewReader(sps.Path))
+	sps.S.Mode = scanner.ScanFloats | scanner.ScanChars
+
+	tok := sps.S.Scan()
+	lastTokenText := ""
+	for tok != scanner.EOF {
+		tokenText := sps.S.TokenText()
+		log.Printf("TT: %s LTT:%s\n", tokenText, lastTokenText)
+		if !sps.handleToken(tokenText) {
+			log.Printf("Retry\n")
+			sps.handleToken(lastTokenText)
+		}
+
+		lastTokenText = tokenText
+		tok = sps.S.Scan()
+	}
+	return sps.Polygons, nil
+}
+
+func (sps *svgPathScanner) handleToken(cmd string) bool {
+	log.Printf("Cmd: %s\n", cmd)
+	switch cmd {
+	case "M":
+		poly := svgPolygon{Mode: sps.Mode}
+		sps.CurrentPolygon = &poly
+
+		sps.Cursor.X, sps.Cursor.Y = sps.scanTwoInts()
+
+		sps.CurrentPolygon.Points = append(sps.CurrentPolygon.Points, sps.Cursor)
+	case "m":
+		poly := svgPolygon{Mode: sps.Mode}
+		sps.CurrentPolygon = &poly
+
+		X, Y := sps.scanTwoInts()
+		sps.Cursor.X += X
+		sps.Cursor.Y += Y
+
+		sps.CurrentPolygon.Points = append(sps.CurrentPolygon.Points, sps.Cursor)
+	case "L":
+		sps.Cursor.X, sps.Cursor.Y = sps.scanTwoInts()
+
+		sps.CurrentPolygon.Points = append(sps.CurrentPolygon.Points, sps.Cursor)
+	case "l":
+		X, Y := sps.scanTwoInts()
+		sps.Cursor.X += X
+		sps.Cursor.Y += Y
+
+		sps.CurrentPolygon.Points = append(sps.CurrentPolygon.Points, sps.Cursor)
+	case "H":
+		sps.Cursor.X = sps.scanOneInt()
+		sps.CurrentPolygon.Points = append(sps.CurrentPolygon.Points, sps.Cursor)
+	case "h":
+		sps.Cursor.X += sps.scanOneInt()
+		sps.CurrentPolygon.Points = append(sps.CurrentPolygon.Points, sps.Cursor)
+	case "V":
+		sps.Cursor.Y = sps.scanOneInt()
+		sps.CurrentPolygon.Points = append(sps.CurrentPolygon.Points, sps.Cursor)
+	case "v":
+		sps.Cursor.Y += sps.scanOneInt()
+		sps.CurrentPolygon.Points = append(sps.CurrentPolygon.Points, sps.Cursor)
+	case "z":
+		sps.Polygons = append(sps.Polygons, *sps.CurrentPolygon)
+		sps.CurrentPolygon = nil
+	case "Z":
+		sps.Polygons = append(sps.Polygons, *sps.CurrentPolygon)
+		sps.CurrentPolygon = nil
+	default:
+		return false
+	}
+	return true
+}
+
+func (path *svgPath) generatePath() {
+	polys, err := NewPathScanner(path.D, path.mode()).GeneratePolygons()
+	if err != nil {
+		log.Printf("Error generating polygons: %v", err)
+	}
+	log.Printf("Polys: %+v\n", polys)
+	path.Polygons = polys
 }
 
 func (group *svgGroup) updateTransform() {
