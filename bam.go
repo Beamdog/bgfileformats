@@ -697,7 +697,7 @@ func (bam *BAM) MakeSpriteSheet(w io.Writer) {
 
 		draw.Draw(i, drawRect, img, image.Point{0, 0}, draw.Src)
 
-		fmt.Printf("\t{\"filename\": \"frame_%d\", \"frame\": {\"x\":%d,\"y\":%d,\"w\":%d,\"h\":%d},\"rotated\": false,\"trimmed\":true,\"spriteSourceSize\": {\"x\":%d,\"y\":%d,\"w\":%d,\"h\":%d}, \"sourceSize\": {\"w\":%d,\"h\":%d}}", idx, drawRect.Min.X, drawRect.Min.Y, drawRect.Dx(), drawRect.Dy(), -1 * frame.CenterX, -1 * frame.CenterY, frame.Width, frame.Height, frame.Width, frame.Height)
+		fmt.Printf("\t{\"filename\": \"frame_%d\", \"frame\": {\"x\":%d,\"y\":%d,\"w\":%d,\"h\":%d},\"rotated\": false,\"trimmed\":true,\"spriteSourceSize\": {\"x\":%d,\"y\":%d,\"w\":%d,\"h\":%d}, \"sourceSize\": {\"w\":%d,\"h\":%d}}", idx, drawRect.Min.X, drawRect.Min.Y, drawRect.Dx(), drawRect.Dy(), frame.CenterX * -1, frame.CenterY * -1, int16(frame.Width) + frame.CenterX, int16(frame.Height) + frame.CenterY, frame.Width, frame.Height)
 		x += int(frame.Width) + 2
 
 		if int(frame.Height) > maxY {
