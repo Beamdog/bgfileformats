@@ -657,10 +657,11 @@ func (bam *BAM) RebuildSequencesAndDropFrames() {
 }
 
 
-func (bam *BAM) MakeSpriteSheet(w io.Writer) {
+func (bam *BAM) MakeSpriteSheet(imgWriter io.Writer, jsonWriter io.Writer) {
 	size := image.Point{0, 0}
+	maxY := 0
 
-	fmt.Printf("{\"frames\": [\n")
+	jsonData := fmt.Sprintf("{\"frames\": [\n")
 
 	numFramesX := int(math.Sqrt(float64(len(bam.Frames))))
 	seqSize := image.Point{0,0}
@@ -668,6 +669,9 @@ func (bam *BAM) MakeSpriteSheet(w io.Writer) {
 		seqSize.X += int(f.Width)
 		if int(f.Height) > seqSize.Y {
 			seqSize.Y = int(f.Height)
+		}
+		if int(f.Height) > maxY {
+			maxY = int(f.Height)
 		}
 		if (idx+1) % numFramesX == 0 {
 			size.Y += seqSize.Y
@@ -677,16 +681,16 @@ func (bam *BAM) MakeSpriteSheet(w io.Writer) {
 			seqSize = image.Point{0,0}
 		}
 	}
+	size.Y += maxY
 
 	size.X = int(next_pow_two(uint(size.X)))
 	size.Y = int(next_pow_two(uint(size.Y)))
 	i := image.NewPaletted(image.Rect(0, 0, size.X, size.Y), bam.Image[0].Palette)
-	maxY := 0
+	maxY = 0
 	y := 1
 	x := 1
 	lastFrame := len(bam.Frames)-1
 	for idx, frame := range bam.Frames {
-		maxY = 0
 		img := &bam.Image[idx]
 		drawRect := image.Rect(
 			x,
@@ -697,7 +701,7 @@ func (bam *BAM) MakeSpriteSheet(w io.Writer) {
 
 		draw.Draw(i, drawRect, img, image.Point{0, 0}, draw.Src)
 
-		fmt.Printf("\t{\"filename\": \"frame_%d\", \"frame\": {\"x\":%d,\"y\":%d,\"w\":%d,\"h\":%d},\"rotated\": false,\"trimmed\":true,\"spriteSourceSize\": {\"x\":%d,\"y\":%d,\"w\":%d,\"h\":%d}, \"sourceSize\": {\"w\":%d,\"h\":%d}}", idx, drawRect.Min.X, drawRect.Min.Y, drawRect.Dx(), drawRect.Dy(), frame.CenterX * -1, frame.CenterY * -1, int16(frame.Width) + frame.CenterX, int16(frame.Height) + frame.CenterY, frame.Width, frame.Height)
+		jsonData += fmt.Sprintf("\t{\"filename\": \"frame_%d\", \"frame\": {\"x\":%d,\"y\":%d,\"w\":%d,\"h\":%d},\"rotated\": false,\"trimmed\":true,\"spriteSourceSize\": {\"x\":%d,\"y\":%d,\"w\":%d,\"h\":%d}, \"sourceSize\": {\"w\":%d,\"h\":%d}}", idx, drawRect.Min.X, drawRect.Min.Y, drawRect.Dx(), drawRect.Dy(), frame.CenterX * -1, frame.CenterY * -1, int16(frame.Width) + frame.CenterX, int16(frame.Height) + frame.CenterY, frame.Width, frame.Height)
 		x += int(frame.Width) + 2
 
 		if int(frame.Height) > maxY {
@@ -705,16 +709,17 @@ func (bam *BAM) MakeSpriteSheet(w io.Writer) {
 		}
 		if (idx + 1) % numFramesX == 0 {
 			y += maxY
-			maxY = 0
+			//maxY = 0
 			x = 1
 		}
 		if idx != lastFrame {
-			fmt.Printf(",\n")
+			jsonData += fmt.Sprintf(",\n")
 		} else {
-			fmt.Printf("\n")
+			jsonData += fmt.Sprintf("\n")
 		}
 	}
 	i.Palette[0] = color.RGBA{0,0,0,0}
-	fmt.Printf("]}\n")
-	png.Encode(w, i)
+	jsonData += fmt.Sprintf("]}\n")
+	jsonWriter.Write([]byte(jsonData))
+	png.Encode(imgWriter, i)
 }
