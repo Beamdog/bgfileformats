@@ -126,21 +126,15 @@ func (jw *JsonWed) ToJson() (string, error) {
 func (jw *JsonWed) Export(name string, dir string) error {
 	wallSvgFile, err := os.Create(filepath.Join(dir, name) + ".svg")
 	if err != nil {
-		return err
+		return fmt.Errorf("Unable to open svg: %v", err)
 	}
 	defer wallSvgFile.Close()
 
 	jsonFile, err := os.Create(filepath.Join(dir, name) + ".jwed")
 	if err != nil {
-		return err
+		return fmt.Errorf("unable to create jwed: %v", err)
 	}
 	defer jsonFile.Close()
-
-	tisFile, err := os.Open(filepath.Join(dir, name) + ".tis")
-	if err != nil {
-		return err
-	}
-	defer tisFile.Close()
 
 	jw.Overlays[0].Svg = name + ".svg"
 
@@ -148,11 +142,10 @@ func (jw *JsonWed) Export(name string, dir string) error {
 	height := jw.Overlays[0].PixelHeight()
 
 	wallSvg := svg.New(wallSvgFile)
-	wallSvg.Start(width, height)
-	wallSvg.Gid("background")
+	wallSvg.Start(width, height, "xmlns:inkscape=\"http://www.inkscape.org/namespaces/inkscape\"")
+	wallSvg.Group("id=\"background\" inkscape:groupmode=\"layer\"")
 	wallSvg.Image(0, 0, width, height, name+".png")
 	wallSvg.Gend()
-	wallSvg.Gid("walls")
 	for _, wall := range jw.Walls {
 		if len(wall.Verts) > 0 {
 			wallSvg.Writer.Write([]byte(fmt.Sprintf(`<path d="%s" style="%s">`, wall.SvgPath(), "fill:none;stroke:blue")))
@@ -160,10 +153,9 @@ func (jw *JsonWed) Export(name string, dir string) error {
 			wallSvg.Writer.Write([]byte("</path>"))
 		}
 	}
-	wallSvg.Gend()
 	for _, door := range jw.Doors {
 		if len(door.PolygonsOpen) > 0 {
-			wallSvg.Gid("door_open_" + door.Name)
+			wallSvg.Group("id=\"door_open_" + door.Name + "\" inkscape:groupmode=\"layer\"")
 			for _, poly := range door.PolygonsOpen {
 				wallSvg.Writer.Write([]byte(fmt.Sprintf(`<path d="%s" style="%s">`, poly.SvgPath(), "fill:auqa;stroke:aqua")))
 				wallSvg.Desc(fmt.Sprintf("mode: %d", poly.Mode))
@@ -173,7 +165,7 @@ func (jw *JsonWed) Export(name string, dir string) error {
 		}
 
 		if len(door.PolygonsClosed) > 0 {
-			wallSvg.Gid("door_closed_" + door.Name)
+			wallSvg.Group("id=\"door_closed_" + door.Name + "\" inkscape:groupmode=\"layer\"")
 			for _, poly := range door.PolygonsClosed {
 				wallSvg.Writer.Write([]byte(fmt.Sprintf(`<path d="%s" style="%s">`, poly.SvgPath(), "fill:none;stroke:red")))
 				wallSvg.Desc(fmt.Sprintf("mode: %d", poly.Mode))
@@ -184,11 +176,15 @@ func (jw *JsonWed) Export(name string, dir string) error {
 	}
 	wallSvg.End()
 
-	log.Printf("Name: %s\n", name)
 
-	tis, err := OpenTis(tisFile, name, dir)
-	if err != nil {
-		return err
+	for _, ov := range jw.Overlays {
+		fileName := fmt.Sprintf("%s.png", ov.Name)
+		f, err := os.Create(filepath.Join(dir, fileName))
+		if err != nil {
+			return err
+		}
+		png.Encode(f, ov.BackgroundImg)
+		f.Close()
 	}
 
 	for overlayIdx, _ := range jw.Overlays[1:] {
@@ -213,7 +209,7 @@ func (jw *JsonWed) Export(name string, dir string) error {
 				} else {
 					tileId = jw.TileIndices[tm.Id]
 				}
-				tileImg := tis.SubImage(tileId)
+				tileImg := jw.Overlays[0].Tis.SubImage(tileId)
 				X, Y := 64*(jw.TileIndices[tm.Id]%jw.Overlays[0].Width), 64*(jw.TileIndices[tm.Id]/jw.Overlays[0].Width)
 
 				filter := true
@@ -273,7 +269,7 @@ func (jw *JsonWed) Export(name string, dir string) error {
 					tileId = jw.TileIndices[tm.Id]
 				}
 
-				tileImg := tis.SubImage(tileId)
+				tileImg := jw.Overlays[0].Tis.SubImage(tileId)
 				for y := tileBounds.Min.Y; y < tileBounds.Max.Y; y++ {
 					for x := tileBounds.Min.X; x < tileBounds.Max.X; x++ {
 						r, g, b, _ := tileImg.At(x, y).RGBA()
@@ -295,6 +291,7 @@ func (jw *JsonWed) Export(name string, dir string) error {
 		f.Close()
 	}
 
+
 	data, err := jw.ToJson()
 	if err != nil {
 		return err
@@ -303,7 +300,7 @@ func (jw *JsonWed) Export(name string, dir string) error {
 	return nil
 }
 
-func (jw *JsonWed) ImportOverlays(wed *Wed) {
+func (jw *JsonWed) ImportOverlays(wed *Wed) error {
 	jw.Overlays = make([]jsonWedOverlay, 0)
 	jw.TileIndices = make([]int, len(wed.TileIndices))
 	for idx, overlay := range wed.Overlays {
@@ -323,12 +320,45 @@ func (jw *JsonWed) ImportOverlays(wed *Wed) {
 				ov.Tilemap[tmIdx].AnimSpeed = int(tilemap.AnimSpeed)
 				ov.Tilemap[tmIdx].WFlags = int(tilemap.WFlags)
 			}
+
+			tisFile, err := os.Open(overlay.Name.String() + ".tis")
+			if err != nil {
+				return fmt.Errorf("unable to open overlay: %s %v", overlay.Name.String(), err)
+			}
+			defer tisFile.Close()
+
+			cwd, err := os.Getwd()
+			if err != nil {
+				return fmt.Errorf("unable to get working directory: %v", err)
+			}
+			tis, err := OpenTis(tisFile, overlay.Name.String(), cwd)
+			if err != nil {
+				return fmt.Errorf("unable to open tis: %v", err)
+			}
+			ov.Tis = tis
+			img := image.NewRGBA(image.Rect(0, 0, 64 * ov.Width, 64 * ov.Height))
+			closedimg := image.NewRGBA(image.Rect(0, 0, 64 * ov.Width, 64 * ov.Height))
+			for y := 0; y < int(ov.Height); y++ {
+				for x := 0; x < int(ov.Width); x++ {
+					tileNum := y*int(ov.Width) + x
+					tileImg := tis.SubImage(tileNum)
+					draw.Draw(img, image.Rect(x*64, y*64, x*64+64, y*64+64), tileImg, image.Pt(0, 0), draw.Src)
+					if ov.Tilemap[tileNum].Alt != -1 {
+						tileImg = tis.SubImage(ov.Tilemap[tileNum].Alt)
+						draw.Draw(closedimg, image.Rect(x*64, y*64, x*64+64, y*64+64), tileImg, image.Pt(0, 0), draw.Src)
+					}
+				}
+			}
+			ov.BackgroundImg = img
+			ov.ClosedImage = closedimg
+
 			jw.Overlays = append(jw.Overlays, ov)
 		}
 	}
 	for idx, ti := range wed.TileIndices {
 		jw.TileIndices[idx] = int(ti)
 	}
+	return nil
 }
 
 func (jw *JsonWed) ImportDoors(wed *Wed) {
@@ -718,7 +748,8 @@ func (jw *JsonWed) ToWed() (*Wed, error) {
 			} else {
 				altTile = jw.Overlays[0].Tis.AddTile(tiles[0])
 			}
-			tm := &wed.Tilemaps[idx][tileId]
+			log.Printf("IDX: %d tileId: %d\n", idx, tileId)
+			tm := &wed.Tilemaps[0][tileId]
 			tm.AlternateTileIndex = int16(altTile)
 			wed.DoorTileCells = append(wed.DoorTileCells, uint16(tileId))
 		}

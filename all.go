@@ -2,6 +2,7 @@ package bg
 
 import (
 	"strings"
+	"encoding/json"
 )
 
 type LONGSTRING struct {
@@ -27,10 +28,11 @@ func NewResref(name string) RESREF {
 	return r
 }
 
+func (r *RESREF) MarshalJSON() ([]byte, error) {
+	return json.Marshal(r.String())
+}
+
 func (r *RESREF) String() string {
 	str := strings.Split(string(r.Name[0:]), "\x00")[0]
 	return str
-}
-func (r *RESREF) MarshalJSON() ([]byte, error) {
-	return []byte("\"" + r.String() + "\""), nil
 }

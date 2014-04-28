@@ -7,8 +7,8 @@ import (
 	"image/draw"
 	"image/png"
 	"io"
-	"log"
 	"os"
+	"fmt"
 )
 
 type wedHeader struct {
@@ -19,6 +19,13 @@ type wedHeader struct {
 	SecondHeaderOffset  uint32
 	DoorOffset          uint32
 	DoorTileCellsOffset uint32
+	/*
+	VisibilityRange     uint16
+	ChanceOfRain        uint16
+	ChanceOfFog         uint16
+	ChanceOfSnow        uint16
+	Flags               uint32*/
+
 }
 
 type wedOverlay struct {
@@ -105,7 +112,10 @@ func (wed *Wed) ToJson() (string, error) {
 
 func (wed *Wed) ToJsonWed() (*JsonWed, error) {
 	jw := JsonWed{}
-	jw.ImportOverlays(wed)
+	err := jw.ImportOverlays(wed)
+	if err != nil {
+		return nil, fmt.Errorf("Error in importing overlays: %v", err)
+	}
 	jw.ImportDoors(wed)
 	jw.ImportWalls(wed)
 
@@ -304,7 +314,6 @@ func OpenWed(r io.ReadSeeker) (*Wed, error) {
 		return nil, err
 	}
 
-	log.Printf("Polygons: %+v\n", wed.Polygons)
 	vertexCount := 0
 	for _, polygon := range wed.Polygons {
 		vertexCount += int(polygon.VertexCount)

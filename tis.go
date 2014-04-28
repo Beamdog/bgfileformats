@@ -227,7 +227,7 @@ func (tis *Tis) readV2(r io.ReadSeeker, fileLen int64, root string) error {
 	tileCount := fileLen / int64(binary.Size(&tisTile{}))
 	tiles := make([]tisTile, tileCount)
 	if err := binary.Read(r, binary.LittleEndian, &tiles); err != nil {
-		return err
+		return fmt.Errorf("Unable to read tiles: %v", err)
 	}
 	textures := make([]tisPvrTexture, 0)
 	for i := 0; ; i++ {
@@ -237,7 +237,7 @@ func (tis *Tis) readV2(r io.ReadSeeker, fileLen int64, root string) error {
 			break
 		}
 		if err != nil {
-			return err
+			return fmt.Errorf("Error loading pvrz: %s %v", tis.Name[0], err)
 		}
 
 		log.Printf("Loading: %s\n", fname)
@@ -274,7 +274,7 @@ func OpenTis(r io.ReadSeeker, name string, root string) (*Tis, error) {
 	var err error
 	header := tisHeader{}
 	if err := binary.Read(r, binary.LittleEndian, &header); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("Unable to read header: %v", err)
 	}
 
 	fileLen, err := r.Seek(0, os.SEEK_END)
@@ -291,7 +291,7 @@ func OpenTis(r io.ReadSeeker, name string, root string) (*Tis, error) {
 		err = tis.readV1(r)
 	}
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("Unable to read tis data: %v", err)
 	}
 
 	return &tis, nil
