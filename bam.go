@@ -87,9 +87,19 @@ type decoder struct {
 	sequences []BamSequence
 }
 
+var bgPalette = []color.Color {
+	color.RGBA{0x00, 0xff, 0x00, 0xff},
+	color.RGBA{0xff, 0x65, 0x97, 0xff},
+	color.RGBA{0xff, 0x80, 0x00, 0xff},
+	color.RGBA{0xff, 0x80, 0x00, 0xff},
+	color.RGBA{0xff, 0xff, 0xff, 0xff},
+	color.RGBA{0xe1, 0xe1, 0xe1, 0xff},
+}
+
 func (d *decoder) decode_bamd(r io.Reader) error {
 	var s scanner.Scanner
 	var err error
+	var imgFrames []image.Image
 	s.Init(r)
 	s.Whitespace = 1<<'\t' | 1<<' '
 	frameNames := map[string]int{}
@@ -126,13 +136,14 @@ func (d *decoder) decode_bamd(r io.Reader) error {
 			if err != nil {
 				return fmt.Errorf("Unable to open %s: %v", filepath.Clean(path), err)
 			}
-			img, err := png.Decode(imgFile)
+			img, _, err := image.Decode(imgFile)
 			if err != nil {
 				return fmt.Errorf("Unable to decode png %s: %v", filepath.Clean(path), err)
 			}
 			imgFile.Close()
+			imgFrames = append(imgFrames, img)
 
-			paletted_img := image.NewPaletted(img.Bounds(), img.ColorModel().(color.Palette))
+/*			paletted_img := image.NewPaletted(img.Bounds(), img.ColorModel().(color.Palette))
 			paletted_img.Palette[0] = color.RGBA{0, 255, 0, 255}
 			bounds := img.Bounds()
 			for y := bounds.Min.Y; y < bounds.Max.Y; y++ {
@@ -144,13 +155,12 @@ func (d *decoder) decode_bamd(r io.Reader) error {
 						paletted_img.Set(x, y, img.At(x, y))
 					}
 				}
-			}
+			}*/
 
 			frame := BamFrame{uint16(img.Bounds().Size().X), uint16(img.Bounds().Size().Y), int16(center_x), int16(center_y), 0}
 
 			frameNames[name] = len(d.Frames)
 			d.Frames = append(d.Frames, frame)
-			d.image = append(d.image, *paletted_img)
 		} else if strings.ToLower(s.TokenText()) == "sequence" {
 			frames := make([]string, 0)
 			sequences := make([]uint16, 0)
@@ -179,6 +189,56 @@ func (d *decoder) decode_bamd(r io.Reader) error {
 		}
 
 	}
+
+	paletteImg, ok := imgFrames[0].(*image.Paletted)
+	quantizeImage := false
+	if ok {
+		// if we dont have a ranged palette, quantize the image
+		for idx, c := range bgPalette {
+			if paletteImg.Palette[idx] != c {
+				log.Printf("1st frame palette entry: %d does not match: %v, %v\n", idx, paletteImg.Palette[idx], c)
+				quantizeImage = true
+			}
+		}
+	} else {
+		quantizeImage = true
+	}
+	if quantizeImage {
+		log.Printf("Generating palette")
+		maxHeight := 0
+		width := 0
+		for _, i := range imgFrames {
+			if i.Bounds().Dy() > maxHeight {
+				maxHeight = i.Bounds().Dy()
+			}
+			width += i.Bounds().Dx()
+		}
+		contactSheet := image.NewRGBA(image.Rect(0, 0, width, maxHeight))
+		x := 0
+		for _, i := range imgFrames {
+			r := image.Rect(x, 0, x + i.Bounds().Dx(), i.Bounds().Dy())
+			draw.Draw(contactSheet, r, i, image.Pt(0, 0), draw.Over)
+			x += i.Bounds().Dx()
+		}
+
+		palette := make([]color.Color, 256)
+		palette[0] = color.RGBA{0, 255,0, 255}
+		paletteImg = image.NewPaletted(image.Rect(0, 0, width, maxHeight), palette)
+
+		mcq := MedianCutQuantizer{255}
+		mcq.Quantize(paletteImg, image.Rect(0, 0, width, maxHeight), contactSheet, image.Pt(0,0))
+
+		log.Printf("palette size: %d", len(paletteImg.Palette))
+		paletteImg.Palette[0] = color.RGBA{0,255,0,255}
+	}
+
+	for _, i := range imgFrames {
+		img := image.NewPaletted(i.Bounds(), paletteImg.Palette)
+		draw.Draw(img, i.Bounds(), i, image.Pt(0,0), draw.Over)
+
+		d.image = append(d.image, *img)
+	}
+
 	d.colorMap = d.image[0].Palette
 
 	return nil

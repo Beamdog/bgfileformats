@@ -32,6 +32,10 @@ func (r *RESREF) MarshalJSON() ([]byte, error) {
 	return json.Marshal(r.String())
 }
 
+func (r *RESREF) Valid() bool {
+	return r.String() != ""
+}
+
 func (r *RESREF) String() string {
 	str := strings.Split(string(r.Name[0:]), "\x00")[0]
 	return str
