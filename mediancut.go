@@ -225,11 +225,13 @@ func (q *MedianCutQuantizer) Quantize(dst *image.Paletted, r image.Rectangle, sr
 		for x := r.Min.X; x < r.Max.X; x++ {
 			c := src.At(x, y)
 			r, g, b, _ := c.RGBA()
-			colorSet[(r>>8)<<16|(g>>8)<<8|b>>8] = c
-			points[i][0] = int(r)
-			points[i][1] = int(g)
-			points[i][2] = int(b)
-			i++
+			if !(r==0 && g == 0xffff && b == 0) {
+				colorSet[(r>>8)<<16|(g>>8)<<8|b>>8] = c
+				points[i][0] = int(r)
+				points[i][1] = int(g)
+				points[i][2] = int(b)
+				i++
+			}
 		}
 	}
 	if len(colorSet) <= q.NumColor {

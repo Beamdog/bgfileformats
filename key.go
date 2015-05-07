@@ -104,7 +104,7 @@ func (res *keyResourceEntry) GetTilesetId() uint32 {
 	return (res.Location & 0x000FC000) >> 14
 }
 func (res *keyResourceEntry) CleanName() string {
-	return strings.ToUpper(strings.Trim(string(res.Name[0:]), "\000"))
+	return strings.ToUpper(strings.Trim(res.Name.String(), "\000"))
 }
 
 func OpenKEY(r io.ReadSeeker, root string) (*KEY, error) {

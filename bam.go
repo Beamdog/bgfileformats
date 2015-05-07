@@ -2,8 +2,6 @@ package bg
 
 import (
 	"bytes"
-	"math"
-	"sort"
 	"compress/zlib"
 	"encoding/binary"
 	"fmt"
@@ -15,9 +13,11 @@ import (
 	"io"
 	"io/ioutil"
 	"log"
+	"math"
 	"os"
 	"path"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"text/scanner"
@@ -87,7 +87,7 @@ type decoder struct {
 	sequences []BamSequence
 }
 
-var bgPalette = []color.Color {
+var bgPalette = []color.Color{
 	color.RGBA{0x00, 0xff, 0x00, 0xff},
 	color.RGBA{0xff, 0x65, 0x97, 0xff},
 	color.RGBA{0xff, 0x80, 0x00, 0xff},
@@ -141,30 +141,43 @@ func (d *decoder) decode_bamd(r io.Reader) error {
 				return fmt.Errorf("Unable to decode png %s: %v", filepath.Clean(path), err)
 			}
 			imgFile.Close()
-			imgFrames = append(imgFrames, img)
 
-/*			paletted_img := image.NewPaletted(img.Bounds(), img.ColorModel().(color.Palette))
-			paletted_img.Palette[0] = color.RGBA{0, 255, 0, 255}
-			bounds := img.Bounds()
-			for y := bounds.Min.Y; y < bounds.Max.Y; y++ {
-				for x := bounds.Min.X; x < bounds.Max.X; x++ {
-					_, _, _, a := img.At(x, y).RGBA()
-					if a == 0 {
-						paletted_img.Set(x, y, color.RGBA{0, 255, 0, 255})
-					} else {
-						paletted_img.Set(x, y, img.At(x, y))
-					}
-				}
-			}*/
+			r := trimBounds(img)
+			palImg, ok := img.(*image.Paletted)
+			if !ok {
+				imgTrim := image.NewRGBA(image.Rect(0, 0, r.Dx(), r.Dy()))
+				draw.Draw(imgTrim, imgTrim.Bounds(), img, r.Min, draw.Over)
+				imgFrames = append(imgFrames, imgTrim)
+			} else {
+				imgTrim := image.NewPaletted(image.Rect(0, 0, r.Dx(), r.Dy()), palImg.Palette)
+				draw.Draw(imgTrim, imgTrim.Bounds(), img, r.Min, draw.Over)
+				imgFrames = append(imgFrames, imgTrim)
+			}
+			center_x = center_x - r.Min.X
+			center_y = center_y - r.Min.Y
 
-			frame := BamFrame{uint16(img.Bounds().Size().X), uint16(img.Bounds().Size().Y), int16(center_x), int16(center_y), 0}
+			/*			paletted_img := image.NewPaletted(img.Bounds(), img.ColorModel().(color.Palette))
+						paletted_img.Palette[0] = color.RGBA{0, 255, 0, 255}
+						bounds := img.Bounds()
+						for y := bounds.Min.Y; y < bounds.Max.Y; y++ {
+							for x := bounds.Min.X; x < bounds.Max.X; x++ {
+								_, _, _, a := img.At(x, y).RGBA()
+								if a == 0 {
+									paletted_img.Set(x, y, color.RGBA{0, 255, 0, 255})
+								} else {
+									paletted_img.Set(x, y, img.At(x, y))
+								}
+							}
+						}*/
+
+			frame := BamFrame{uint16(r.Size().X), uint16(r.Size().Y), int16(center_x), int16(center_y), 0}
 
 			frameNames[name] = len(d.Frames)
 			d.Frames = append(d.Frames, frame)
 		} else if strings.ToLower(s.TokenText()) == "sequence" {
 			frames := make([]string, 0)
 			sequences := make([]uint16, 0)
-			for tok = s.Scan(); !(s.TokenText() == "\n" || s.TokenText() =="\r"); tok = s.Scan() {
+			for tok = s.Scan(); !(s.TokenText() == "\n" || s.TokenText() == "\r"); tok = s.Scan() {
 				frame := strings.TrimSpace(s.TokenText())
 				frames = append(frames, frame)
 				sequences = append(sequences, uint16(frameNames[frame]))
@@ -216,25 +229,46 @@ func (d *decoder) decode_bamd(r io.Reader) error {
 		contactSheet := image.NewRGBA(image.Rect(0, 0, width, maxHeight))
 		x := 0
 		for _, i := range imgFrames {
-			r := image.Rect(x, 0, x + i.Bounds().Dx(), i.Bounds().Dy())
+			r := image.Rect(x, 0, x+i.Bounds().Dx(), i.Bounds().Dy())
 			draw.Draw(contactSheet, r, i, image.Pt(0, 0), draw.Over)
 			x += i.Bounds().Dx()
 		}
 
 		palette := make([]color.Color, 256)
-		palette[0] = color.RGBA{0, 255,0, 255}
+		palette[0] = color.RGBA{0, 255, 0, 255}
+		palette[1] = color.RGBA{128, 128, 128, 255}
+		palette[2] = color.RGBA{255, 128, 0, 255}
+		palette[3] = color.RGBA{255, 128, 0, 255}
 		paletteImg = image.NewPaletted(image.Rect(0, 0, width, maxHeight), palette)
 
-		mcq := MedianCutQuantizer{255}
-		mcq.Quantize(paletteImg, image.Rect(0, 0, width, maxHeight), contactSheet, image.Pt(0,0))
+		mcq := MedianCutQuantizer{252}
+		mcq.Quantize(paletteImg, image.Rect(0, 0, width, maxHeight), contactSheet, image.Pt(0, 0))
 
+		fCs, _ := os.Create("contactsheet_out.png")
+		png.Encode(fCs, contactSheet)
+		fCs.Close()
+		fPal, _ := os.Create("palette_out.png")
+		png.Encode(fPal, paletteImg)
+		fPal.Close()
 		log.Printf("palette size: %d", len(paletteImg.Palette))
-		paletteImg.Palette[0] = color.RGBA{0,255,0,255}
+		paletteImg.Palette[0] = color.RGBA{0, 255, 0, 255}
+		paletteImg.Palette[1] = color.RGBA{128, 128, 128, 255}
+		paletteImg.Palette[2] = color.RGBA{255, 128, 0, 255}
+		paletteImg.Palette[3] = color.RGBA{255, 128, 0, 255}
 	}
 
 	for _, i := range imgFrames {
 		img := image.NewPaletted(i.Bounds(), paletteImg.Palette)
-		draw.Draw(img, i.Bounds(), i, image.Pt(0,0), draw.Over)
+		draw.Draw(img, i.Bounds(), i, image.Pt(0, 0), draw.Over)
+
+		/*
+			f, err := os.Create(fmt.Sprintf("converted_%d.png", idx))
+			if err != nil {
+				log.Fatal(err)
+			}
+			png.Encode(f, img)
+			f.Close()
+		*/
 
 		d.image = append(d.image, *img)
 	}
@@ -700,12 +734,41 @@ func (bam *BAM) MakeBamd(output string, name string, mirror bool, offset_x int, 
 	}
 }
 
+func trimBounds(img image.Image) image.Rectangle {
+	bounds := img.Bounds()
+	firstX := bounds.Max.X
+	firstY := bounds.Max.Y
+	lastX := bounds.Min.X
+	lastY := bounds.Min.Y
+	transColor := color.RGBA{0, 255, 0, 255}
+
+	for y := bounds.Min.Y; y < bounds.Max.Y; y++ {
+		for x := bounds.Min.X; x < bounds.Max.X; x++ {
+			if img.At(x, y) != transColor {
+				if y < firstY {
+					firstY = y
+				}
+				if y > lastY {
+					lastY = y
+				}
+				if x < firstX {
+					firstX = x
+				}
+				if x > lastX {
+					lastX = x
+				}
+			}
+		}
+	}
+
+	return image.Rect(firstX, firstY, lastX, lastY)
+}
 
 func (bam *BAM) RebuildSequencesAndDropFrames() {
 	foundFrames := map[int]bool{}
 
 	for _, seq := range bam.Sequences {
-		for v := seq.Start; v < seq.Start + seq.Count; v++ {
+		for v := seq.Start; v < seq.Start+seq.Count; v++ {
 			foundFrames[int(bam.SequenceToImage[v])] = true
 		}
 	}
@@ -714,14 +777,14 @@ func (bam *BAM) RebuildSequencesAndDropFrames() {
 	newImages := make([]image.Paletted, 0)
 	framesRemoved := 1
 	for idx, _ := range bam.Frames {
-		found,ok := foundFrames[idx]
+		found, ok := foundFrames[idx]
 		if found && ok {
 			newFrames = append(newFrames, bam.Frames[idx])
 			newImages = append(newImages, bam.Image[idx])
 		} else {
 			log.Printf("dropping frame: %d\n", idx)
 			for i, val := range bam.SequenceToImage {
-				if int(val) > idx - framesRemoved  {
+				if int(val) > idx-framesRemoved {
 					//log.Printf("S2I[%d] is %d changing to %d Idx is: %d\n", i, val, int(val) - 1, idx)
 					bam.SequenceToImage[i] = int16(int(val) - 1)
 				}
@@ -733,7 +796,6 @@ func (bam *BAM) RebuildSequencesAndDropFrames() {
 	bam.Frames = newFrames
 }
 
-
 func (bam *BAM) MakeSpriteSheet(imgWriter io.Writer, jsonWriter io.Writer) {
 	size := image.Point{0, 0}
 	maxY := 0
@@ -741,7 +803,7 @@ func (bam *BAM) MakeSpriteSheet(imgWriter io.Writer, jsonWriter io.Writer) {
 	jsonData := fmt.Sprintf("{\"frames\": [\n")
 
 	numFramesX := int(math.Sqrt(float64(len(bam.Frames))))
-	seqSize := image.Point{0,0}
+	seqSize := image.Point{0, 0}
 	for idx, f := range bam.Frames {
 		seqSize.X += int(f.Width)
 		if int(f.Height) > seqSize.Y {
@@ -750,12 +812,12 @@ func (bam *BAM) MakeSpriteSheet(imgWriter io.Writer, jsonWriter io.Writer) {
 		if int(f.Height) > maxY {
 			maxY = int(f.Height)
 		}
-		if (idx+1) % numFramesX == 0 {
+		if (idx+1)%numFramesX == 0 {
 			size.Y += seqSize.Y
 			if seqSize.X > size.X {
 				size.X = seqSize.X
 			}
-			seqSize = image.Point{0,0}
+			seqSize = image.Point{0, 0}
 		}
 	}
 	size.Y += maxY
@@ -766,7 +828,7 @@ func (bam *BAM) MakeSpriteSheet(imgWriter io.Writer, jsonWriter io.Writer) {
 	maxY = 0
 	y := 1
 	x := 1
-	lastFrame := len(bam.Frames)-1
+	lastFrame := len(bam.Frames) - 1
 	for idx, frame := range bam.Frames {
 		img := &bam.Image[idx]
 		drawRect := image.Rect(
@@ -778,13 +840,13 @@ func (bam *BAM) MakeSpriteSheet(imgWriter io.Writer, jsonWriter io.Writer) {
 
 		draw.Draw(i, drawRect, img, image.Point{0, 0}, draw.Src)
 
-		jsonData += fmt.Sprintf("\t{\"filename\": \"frame_%d\", \"frame\": {\"x\":%d,\"y\":%d,\"w\":%d,\"h\":%d},\"rotated\": false,\"trimmed\":true,\"spriteSourceSize\": {\"x\":%d,\"y\":%d,\"w\":%d,\"h\":%d}, \"sourceSize\": {\"w\":%d,\"h\":%d}}", idx, drawRect.Min.X, drawRect.Min.Y, drawRect.Dx(), drawRect.Dy(), frame.CenterX * -1, frame.CenterY * -1, int16(frame.Width) + frame.CenterX, int16(frame.Height) + frame.CenterY, frame.Width, frame.Height)
+		jsonData += fmt.Sprintf("\t{\"filename\": \"frame_%d\", \"frame\": {\"x\":%d,\"y\":%d,\"w\":%d,\"h\":%d},\"rotated\": false,\"trimmed\":true,\"spriteSourceSize\": {\"x\":%d,\"y\":%d,\"w\":%d,\"h\":%d}, \"sourceSize\": {\"w\":%d,\"h\":%d}}", idx, drawRect.Min.X, drawRect.Min.Y, drawRect.Dx(), drawRect.Dy(), frame.CenterX*-1, frame.CenterY*-1, int16(frame.Width)+frame.CenterX, int16(frame.Height)+frame.CenterY, frame.Width, frame.Height)
 		x += int(frame.Width) + 2
 
 		if int(frame.Height) > maxY {
 			maxY = int(frame.Height)
 		}
-		if (idx + 1) % numFramesX == 0 {
+		if (idx+1)%numFramesX == 0 {
 			y += maxY
 			//maxY = 0
 			x = 1
@@ -795,7 +857,7 @@ func (bam *BAM) MakeSpriteSheet(imgWriter io.Writer, jsonWriter io.Writer) {
 			jsonData += fmt.Sprintf("\n")
 		}
 	}
-	i.Palette[0] = color.RGBA{0,0,0,0}
+	i.Palette[0] = color.RGBA{0, 0, 0, 0}
 	jsonData += fmt.Sprintf("]}\n")
 	jsonWriter.Write([]byte(jsonData))
 	png.Encode(imgWriter, i)
