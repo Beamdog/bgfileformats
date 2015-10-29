@@ -1,11 +1,13 @@
+// +build darwin
+
 package bg
 
 import (
 	"encoding/xml"
+	"fmt"
 	"image"
 	"io"
 	"log"
-	"fmt"
 	"regexp"
 	"strconv"
 	"strings"
@@ -25,8 +27,8 @@ type svgPolyline struct {
 }
 
 type svgPolygon struct {
-	Points []svgVert
-	Mode   int
+	Points     []svgVert
+	Mode       int
 	PointsData string `xml:"points,attr"`
 }
 
@@ -39,11 +41,11 @@ type svgPath struct {
 }
 
 type SvgGroup struct {
-	Name      string     `xml:"id,attr"`
-	Groups    []SvgGroup `xml:"g"`
-	Paths     []svgPath  `xml:"path"`
+	Name      string       `xml:"id,attr"`
+	Groups    []SvgGroup   `xml:"g"`
+	Paths     []svgPath    `xml:"path"`
 	Polygons  []svgPolygon `xml:"polygon"`
-	Transform string     `xml:"transform,attr"`
+	Transform string       `xml:"transform,attr"`
 	translate svgVert
 }
 
@@ -53,8 +55,6 @@ type SvgFile struct {
 	Height  int        `xml:"height,attr"`
 	Groups  []SvgGroup `xml:"g"`
 }
-
-
 
 func (path *svgPath) mode() int {
 	var settingRegexp = regexp.MustCompile(`([a-zA-Z]+)\:([ 0-9]+)`)
@@ -87,7 +87,7 @@ func (poly *svgPolygon) generatePoints() {
 		return (r == ' ' || r == '\t' || r == ',')
 	})
 	poly.Points = make([]svgVert, len(vals)/2)
-	for idx,_ := range poly.Points {
+	for idx, _ := range poly.Points {
 		x, _ := strconv.ParseFloat(vals[idx*2], 32)
 		y, _ := strconv.ParseFloat(vals[idx*2+1], 32)
 		poly.Points[idx].X = x
@@ -95,14 +95,13 @@ func (poly *svgPolygon) generatePoints() {
 	}
 }
 
-
 type svgPathScanner struct {
-	Path string
-	Polygons []svgPolygon
+	Path           string
+	Polygons       []svgPolygon
 	CurrentPolygon *svgPolygon
-	Cursor svgVert
-	Mode int
-	S scanner.Scanner
+	Cursor         svgVert
+	Mode           int
+	S              scanner.Scanner
 }
 
 func NewPathScanner(path string, mode int) svgPathScanner {
@@ -119,13 +118,13 @@ func (sps *svgPathScanner) scanTwoInts() (int, int) {
 	return X, Y
 }
 
-func (sps *svgPathScanner)scanWhitespace() {
-	for r := sps.S.Peek(); (r == ' ' || r == ','); r = sps.S.Peek() {
+func (sps *svgPathScanner) scanWhitespace() {
+	for r := sps.S.Peek(); r == ' ' || r == ','; r = sps.S.Peek() {
 		r = sps.S.Next()
 	}
 }
 
-func (sps *svgPathScanner)scanOneInt() int {
+func (sps *svgPathScanner) scanOneInt() int {
 	r := sps.S.Scan()
 
 	sign := 1
@@ -401,7 +400,7 @@ func (group *SvgGroup) MergePolygons() {
 				unionPoints = newPoints
 			} else {
 			log.Printf("Contour: %d %+v %d Area: %0.3f %d %d", cidx, c.BoundingBox(), len(c), (bb.Max.X-bb.Min.X) * (bb.Max.Y - bb.Min.Y), newPoints, unionPoints)
-			log.Printf("Clockwise: %v", polyClockwise(c[0].X, c[0].Y, c[1].X, c[1].Y, c[len(c)-1].X, c[len(c)-1].Y)) 
+			log.Printf("Clockwise: %v", polyClockwise(c[0].X, c[0].Y, c[1].X, c[1].Y, c[len(c)-1].X, c[len(c)-1].Y))
 			log.Printf("Union: %+v", union)
 			log.Printf("Union2: %+v", u2)
 			}
@@ -426,7 +425,6 @@ func (group *SvgGroup) MergePolygonsRecursive() {
 		group.Groups[idx].MergePolygonsRecursive()
 	}
 }
-
 
 func (svg *SvgFile) process() {
 	for idx := range svg.Groups {

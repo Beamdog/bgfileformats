@@ -158,8 +158,16 @@ func clip(dst draw.Image, r *image.Rectangle, src image.Image, sp *image.Point) 
 // each grouping.
 type MedianCutQuantizer struct {
 	NumColor int
+	Points   []point
 }
 
+func (q *MedianCutQuantizer) AddPoint(r, g, b int) {
+	q.Points = append(q.Points, point{r, g, b})
+}
+func (q *MedianCutQuantizer) MedianCut() color.Palette {
+	return q.medianCut(q.Points)
+
+}
 func (q *MedianCutQuantizer) medianCut(points []point) color.Palette {
 	if q.NumColor == 0 {
 		return color.Palette{}
@@ -225,7 +233,7 @@ func (q *MedianCutQuantizer) Quantize(dst *image.Paletted, r image.Rectangle, sr
 		for x := r.Min.X; x < r.Max.X; x++ {
 			c := src.At(x, y)
 			r, g, b, _ := c.RGBA()
-			if !(r==0 && g == 0xffff && b == 0) {
+			if !(r == 0 && g == 0xffff && b == 0) {
 				colorSet[(r>>8)<<16|(g>>8)<<8|b>>8] = c
 				points[i][0] = int(r)
 				points[i][1] = int(g)

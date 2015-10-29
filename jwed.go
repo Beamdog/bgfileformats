@@ -1,10 +1,11 @@
+// +build darwin
+
 package bg
 
 import (
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
-	"github.com/ajstarks/svgo"
 	"image"
 	"image/color"
 	"image/draw"
@@ -17,6 +18,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"github.com/ajstarks/svgo"
 )
 
 type JsonWed struct {
@@ -176,7 +179,6 @@ func (jw *JsonWed) Export(name string, dir string) error {
 	}
 	wallSvg.End()
 
-
 	for _, ov := range jw.Overlays {
 		fileName := fmt.Sprintf("%s.png", ov.Name)
 		f, err := os.Create(filepath.Join(dir, fileName))
@@ -291,7 +293,6 @@ func (jw *JsonWed) Export(name string, dir string) error {
 		f.Close()
 	}
 
-
 	data, err := jw.ToJson()
 	if err != nil {
 		return err
@@ -336,8 +337,8 @@ func (jw *JsonWed) ImportOverlays(wed *Wed) error {
 				return fmt.Errorf("unable to open tis: %v", err)
 			}
 			ov.Tis = tis
-			img := image.NewRGBA(image.Rect(0, 0, 64 * ov.Width, 64 * ov.Height))
-			closedimg := image.NewRGBA(image.Rect(0, 0, 64 * ov.Width, 64 * ov.Height))
+			img := image.NewRGBA(image.Rect(0, 0, 64*ov.Width, 64*ov.Height))
+			closedimg := image.NewRGBA(image.Rect(0, 0, 64*ov.Width, 64*ov.Height))
 			for y := 0; y < int(ov.Height); y++ {
 				for x := 0; x < int(ov.Width); x++ {
 					tileNum := y*int(ov.Width) + x
@@ -461,8 +462,8 @@ func (poly *jsonWedPolygon) ToWedPoly() (wedPolygon, []wedVertex) {
 }
 
 func same_color(a, b color.Color) bool {
-	r1,g1,b1,a1 := a.RGBA()
-	r2,g2,b2,a2 := b.RGBA()
+	r1, g1, b1, a1 := a.RGBA()
+	r2, g2, b2, a2 := b.RGBA()
 
 	return r1 == r2 && g1 == g2 && b1 == b2 && a1 == a2
 }
@@ -475,9 +476,9 @@ func (o *jsonWedOverlay) TilesDiffer(tileId int) bool {
 
 	for y := bounds.Min.Y; y <= bounds.Max.Y; y++ {
 		for x := bounds.Min.X; x <= bounds.Max.X; x++ {
-			if !same_color(o.ClosedImage.At(x,y), o.BackgroundImg.At(x,y)) {
-				r1,g1,b1,a1 := o.ClosedImage.At(x,y).RGBA()
-				r2,g2,b2,a2 := o.BackgroundImg.At(x,y).RGBA()
+			if !same_color(o.ClosedImage.At(x, y), o.BackgroundImg.At(x, y)) {
+				r1, g1, b1, a1 := o.ClosedImage.At(x, y).RGBA()
+				r2, g2, b2, a2 := o.BackgroundImg.At(x, y).RGBA()
 				log.Printf("C1[ %d, %d, %d, %d ], C2[ %d, %d, %d, %d]\n", r1, g1, b1, a1, r2, g2, b2, a2)
 				return true
 			}
@@ -590,7 +591,6 @@ func (o *jsonWedOverlay) GenerateTiles(x int, y int, closed bool) ([]*image.RGBA
 			}
 		}
 	}
-
 
 	if stencilId >= 0 && alphaCount != 4096 {
 		images = make([]*image.RGBA, 1)

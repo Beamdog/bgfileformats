@@ -2,6 +2,7 @@ package bg
 
 import (
 	"encoding/binary"
+	"encoding/csv"
 	"fmt"
 	"io"
 	"log"
@@ -375,70 +376,45 @@ func (chu *CHU) WriteSvg(w io.Writer) error {
 
 }
 
-const menuTemplate = `
-{{range .Panels}}
-menu
-{
-	name '{{$.Name}}'
-	panel {{.ID}}
-	{{$panelID := .ID}}
-	state 0
+var g_records [][]string
 
-	label
-	{
-		area {{.X}} {{.Y}} {{.Width}} {{.Height}}
-		mosaic {{.Mosaic}}
+func generatePanelContext(name string, panelId uint32) string {
+	pid := strconv.Itoa(int(panelId))
+	for _, r := range g_records {
+		if name == r[0] && r[2] == pid {
+			return r[1]
+		}
 	}
-
-{{range .Buttons}}
-	button
-	{
-		area {{.X}} {{.Y}} {{.Width}} {{.Height}}
-		bam {{.Bam}}
-		sequence {{.Sequence}}
-		text "button"
-		action "Infinity_ClickButton({{$panelID}}, {{.ControlID}})"
-	}
-{{end}}
-{{range .Sliders}}
-{{end}}
-{{range .Edits}}
-	edit
-	{
-		name "EditArea_{{.ControlID}}"
-		area {{.X}} {{.Y}} {{.Width}} {{.Height}}
-		text point 12
-		text font REALMS
-	}
-{{end}}
-{{range .TextDisplays}}
-	text
-	{
-		area {{.X}} {{.Y}} {{.Width}} {{.Height}}
-		text "textarea" 
-		text point 8
-		{{if .HasScrollbar}}
-		scrollbar 'GUISCRC'
-		{{end}}
-	}
-{{end}}
-{{range .Labels}}
-	label
-	{
-		area {{.X}} {{.Y}} {{.Width}} {{.Height}}
-		text strref {{.StringRef}}
-		text align {{.MenuAlign}}
-		text point 10
-	}
-{{end}}
-{{range .ScrollBars}}
-{{end}}
+	return fmt.Sprintf("%d", panelId)
 }
-{{end}}
-`
+
+func generateControlContext(name string, panelId, controlId uint32) string {
+	pid := strconv.Itoa(int(panelId))
+	cid := strconv.Itoa(int(controlId))
+	for _, r := range g_records {
+		if name == r[0] && r[2] == pid && r[4] == cid {
+			return r[3]
+		}
+	}
+	return fmt.Sprintf("Control: %d", controlId)
+}
 
 func (chu *CHU) WriteMenu(w io.Writer, name string) error {
-	tmpl, err := template.New("menu").Parse(menuTemplate)
+	csvFile, err := os.Open("menu.csv")
+	if err != nil {
+		return fmt.Errorf("Unable to open menu.csv: %+v", err)
+	}
+	r := csv.NewReader(csvFile)
+	g_records, err = r.ReadAll()
+	if err != nil {
+		return fmt.Errorf("Unable to parse csv: %+v", err)
+	}
+
+	funcMap := template.FuncMap{
+		"context": generateControlContext,
+		"panel":   generatePanelContext,
+	}
+	tmpl, err := template.New("chu.tmpl").Funcs(funcMap).ParseFiles("chu.tmpl")
 	if err != nil {
 		return fmt.Errorf("Unable to compile menu template: %+v", err)
 	}

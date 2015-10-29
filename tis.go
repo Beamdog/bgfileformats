@@ -100,7 +100,7 @@ func (tis *Tis) writeV1(w io.Writer) error {
 	palette[0] = color.RGBA{0, 255, 0, 255}
 	outImg := image.NewPaletted(image.Rect(0, 0, 64, 64), palette)
 	for _, img := range tis.imgTiles {
-		mcq := MedianCutQuantizer{255}
+		mcq := MedianCutQuantizer{255, nil}
 		mcq.Quantize(outImg, image.Rect(0, 0, 64, 64), img, image.Point{})
 		for idx, c := range outImg.Palette {
 			r, g, b, _ := c.RGBA()

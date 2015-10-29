@@ -1,8 +1,8 @@
 package bg
 
 import (
-	"strings"
 	"encoding/json"
+	"strings"
 )
 
 type LONGSTRING struct {
@@ -36,7 +36,7 @@ func (r *RESREF) Valid() bool {
 	return r.String() != ""
 }
 
-func (r *RESREF) String() string {
+func (r RESREF) String() string {
 	str := strings.Split(string(r.Name[0:]), "\x00")[0]
 	return str
 }

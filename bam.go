@@ -74,26 +74,39 @@ type BamCHeader struct {
 }
 
 type decoder struct {
-	Header    BamHeader
-	Frames    []BamFrame
-	Cycles    []BamCycle
-	Palette   []uint32
-	FrameLUT  []int16
-	FrameData [][]byte
-	image     []image.Paletted
-	colorMap  color.Palette
-	width     int
-	height    int
-	sequences []BamSequence
+	Header        BamHeader
+	Frames        []BamFrame
+	Cycles        []BamCycle
+	Palette       []uint32
+	FrameLUT      []int16
+	FrameData     [][]byte
+	image         []image.Paletted
+	colorMap      color.Palette
+	width         int
+	height        int
+	sequences     []BamSequence
+	customPalette bool
+	replaceColor  map[color.Color]int
 }
 
-var bgPalette = []color.Color{
-	color.RGBA{0x00, 0xff, 0x00, 0xff},
-	color.RGBA{0xff, 0x65, 0x97, 0xff},
-	color.RGBA{0xff, 0x80, 0x00, 0xff},
-	color.RGBA{0xff, 0x80, 0x00, 0xff},
-	color.RGBA{0xff, 0xff, 0xff, 0xff},
-	color.RGBA{0xe1, 0xe1, 0xe1, 0xff},
+func uint32ToRGBA(c uint32) (r, g, b, a uint8) {
+	b = uint8(c & 0x000000ff)
+	g = uint8((c & 0x0000ff00) >> 8)
+	r = uint8((c & 0x00ff0000) >> 16)
+	a = uint8((c & 0xff000000) >> 24)
+
+	return r, g, b, a
+}
+
+type bgpal struct {
+	palette color.Palette
+}
+
+func (p bgpal) Convert(c color.Color) color.Color {
+	return color.RGBA{0, 0, 0, 255}
+}
+func (p bgpal) Index(c color.Color) int {
+	return 0
 }
 
 func (d *decoder) decode_bamd(r io.Reader) error {
@@ -103,6 +116,9 @@ func (d *decoder) decode_bamd(r io.Reader) error {
 	s.Init(r)
 	s.Whitespace = 1<<'\t' | 1<<' '
 	frameNames := map[string]int{}
+	d.replaceColor = map[color.Color]int{}
+
+	useImagePalette := false
 	for tok := s.Scan(); tok != scanner.EOF; tok = s.Scan() {
 		if strings.ToLower(s.TokenText()) == "frame" {
 			center_x, center_y := 0, 0
@@ -145,32 +161,25 @@ func (d *decoder) decode_bamd(r io.Reader) error {
 			r := trimBounds(img)
 			palImg, ok := img.(*image.Paletted)
 			if !ok {
-				imgTrim := image.NewRGBA(image.Rect(0, 0, r.Dx(), r.Dy()))
+				imgTrim := image.NewRGBA(image.Rect(0, 0, r.Dx()+1, r.Dy()+1))
 				draw.Draw(imgTrim, imgTrim.Bounds(), img, r.Min, draw.Over)
 				imgFrames = append(imgFrames, imgTrim)
 			} else {
-				imgTrim := image.NewPaletted(image.Rect(0, 0, r.Dx(), r.Dy()), palImg.Palette)
-				draw.Draw(imgTrim, imgTrim.Bounds(), img, r.Min, draw.Over)
+				// Copy over the pixels, don't use draw.Draw it doesn't handle transarencies
+				imgTrim := image.NewPaletted(image.Rect(0, 0, r.Dx()+1, r.Dy()+1), palImg.Palette)
+				bounds := r
+				for y := bounds.Min.Y; y <= bounds.Max.Y; y++ {
+					for x := bounds.Min.X; x <= bounds.Max.X; x++ {
+						c1 := palImg.At(x, y)
+						imgTrim.Set(x-bounds.Min.X, y-bounds.Min.Y, c1)
+					}
+				}
 				imgFrames = append(imgFrames, imgTrim)
 			}
 			center_x = center_x - r.Min.X
 			center_y = center_y - r.Min.Y
 
-			/*			paletted_img := image.NewPaletted(img.Bounds(), img.ColorModel().(color.Palette))
-						paletted_img.Palette[0] = color.RGBA{0, 255, 0, 255}
-						bounds := img.Bounds()
-						for y := bounds.Min.Y; y < bounds.Max.Y; y++ {
-							for x := bounds.Min.X; x < bounds.Max.X; x++ {
-								_, _, _, a := img.At(x, y).RGBA()
-								if a == 0 {
-									paletted_img.Set(x, y, color.RGBA{0, 255, 0, 255})
-								} else {
-									paletted_img.Set(x, y, img.At(x, y))
-								}
-							}
-						}*/
-
-			frame := BamFrame{uint16(r.Size().X), uint16(r.Size().Y), int16(center_x), int16(center_y), 0}
+			frame := BamFrame{uint16(r.Size().X + 1), uint16(r.Size().Y + 1), int16(center_x), int16(center_y), 0}
 
 			frameNames[name] = len(d.Frames)
 			d.Frames = append(d.Frames, frame)
@@ -199,6 +208,26 @@ func (d *decoder) decode_bamd(r io.Reader) error {
 			}
 
 			d.sequences = append(d.sequences, sequence)
+		} else if strings.ToLower(s.TokenText()) == "colormap" {
+			tok = s.Scan()
+			c, err := strconv.ParseUint(strings.TrimSpace(s.TokenText()), 0, 32)
+			if err != nil {
+				log.Printf("Invalid color: %s %+v", s.TokenText(), err)
+			}
+			r, g, b, a := uint32ToRGBA(uint32(c))
+
+			tok = s.Scan()
+			index, err := strconv.Atoi(s.TokenText())
+			if err != nil {
+				log.Printf("Invalid palette index: %d %+v", s.TokenText(), err)
+			}
+			colToReplace := color.RGBA{r, g, b, a}
+			d.replaceColor[colToReplace] = index
+			log.Printf("Trying to replace %+v with index %d\n", colToReplace, index)
+
+		} else if strings.ToLower(s.TokenText()) == "usepalette" {
+			useImagePalette = true
+
 		}
 
 	}
@@ -206,17 +235,29 @@ func (d *decoder) decode_bamd(r io.Reader) error {
 	paletteImg, ok := imgFrames[0].(*image.Paletted)
 	quantizeImage := false
 	if ok {
-		// if we dont have a ranged palette, quantize the image
-		for idx, c := range bgPalette {
-			if paletteImg.Palette[idx] != c {
-				log.Printf("1st frame palette entry: %d does not match: %v, %v\n", idx, paletteImg.Palette[idx], c)
-				quantizeImage = true
-			}
-		}
+		log.Printf("Using existing palette")
+		useImagePalette = true
+
 	} else {
 		quantizeImage = true
 	}
-	if quantizeImage {
+	if useImagePalette {
+		d.colorMap = make([]color.Color, len(paletteImg.Palette))
+		copy(d.colorMap, paletteImg.Palette)
+		// convert transparent palette entry to color key
+		for idx, c := range d.colorMap {
+			_, _, _, a := c.RGBA()
+			if a == 0 && idx != 0 {
+				// Swap idx with position 0
+				// We need to replace the colors at entry 0 with our idx
+				d.replaceColor[d.colorMap[0]] = idx
+				d.replaceColor[d.colorMap[idx]] = 0
+				d.colorMap[0], d.colorMap[idx] = d.colorMap[idx], d.colorMap[0]
+				d.colorMap[0] = color.RGBA{0, 255, 0, 255}
+				break
+			}
+		}
+	} else if quantizeImage && !d.customPalette {
 		log.Printf("Generating palette")
 		maxHeight := 0
 		width := 0
@@ -241,39 +282,46 @@ func (d *decoder) decode_bamd(r io.Reader) error {
 		palette[3] = color.RGBA{255, 128, 0, 255}
 		paletteImg = image.NewPaletted(image.Rect(0, 0, width, maxHeight), palette)
 
-		mcq := MedianCutQuantizer{252}
+		mcq := MedianCutQuantizer{252, nil}
 		mcq.Quantize(paletteImg, image.Rect(0, 0, width, maxHeight), contactSheet, image.Pt(0, 0))
 
-		fCs, _ := os.Create("contactsheet_out.png")
-		png.Encode(fCs, contactSheet)
-		fCs.Close()
-		fPal, _ := os.Create("palette_out.png")
-		png.Encode(fPal, paletteImg)
-		fPal.Close()
+		/*
+			fCs, _ := os.Create("contactsheet_out.png")
+			png.Encode(fCs, contactSheet)
+			fCs.Close()
+			fPal, _ := os.Create("palette_out.png")
+			png.Encode(fPal, paletteImg)
+			fPal.Close()
+		*/
 		log.Printf("palette size: %d", len(paletteImg.Palette))
 		paletteImg.Palette[0] = color.RGBA{0, 255, 0, 255}
 		paletteImg.Palette[1] = color.RGBA{128, 128, 128, 255}
 		paletteImg.Palette[2] = color.RGBA{255, 128, 0, 255}
 		paletteImg.Palette[3] = color.RGBA{255, 128, 0, 255}
+		d.colorMap = paletteImg.Palette
 	}
 
 	for _, i := range imgFrames {
-		img := image.NewPaletted(i.Bounds(), paletteImg.Palette)
-		draw.Draw(img, i.Bounds(), i, image.Pt(0, 0), draw.Over)
-
-		/*
-			f, err := os.Create(fmt.Sprintf("converted_%d.png", idx))
-			if err != nil {
-				log.Fatal(err)
+		img := image.NewPaletted(i.Bounds(), d.colorMap)
+		b := i.Bounds()
+		for y := b.Min.Y; y < b.Max.Y; y++ {
+			for x := b.Min.X; x < b.Max.X; x++ {
+				col := i.At(x, y)
+				replace, ok := d.replaceColor[col]
+				_, _, _, a := col.RGBA()
+				if ok {
+					img.Set(x, y, d.colorMap[replace])
+				} else if a == 0 {
+					log.Printf("Alpha 0")
+					img.Set(x, y, d.colorMap[0])
+				} else {
+					img.Set(x, y, col)
+				}
 			}
-			png.Encode(f, img)
-			f.Close()
-		*/
+		}
 
 		d.image = append(d.image, *img)
 	}
-
-	d.colorMap = d.image[0].Palette
 
 	return nil
 }
@@ -405,6 +453,22 @@ func OpenBAM(r io.ReadSeeker) (*BAM, error) {
 
 func OpenBAMD(r io.ReadSeeker, palettePath string) (*BAM, error) {
 	var d decoder
+
+	if _, err := os.Stat(palettePath); err == nil {
+		log.Printf("Using palette at: %s\n", palettePath)
+		paletteFile, err := os.Open(palettePath)
+		if err != nil {
+			return nil, fmt.Errorf("Unable to open palette %s: %v", palettePath, err)
+		}
+		defer paletteFile.Close()
+
+		palette_template_img, err := png.Decode(paletteFile)
+		if err != nil {
+			return nil, fmt.Errorf("Unable to decode png %s: %v", palettePath, err)
+		}
+		d.colorMap = palette_template_img.ColorModel().(color.Palette)
+		d.customPalette = true
+	}
 	if err := d.decode_bamd(r); err != nil {
 		return nil, err
 	}
@@ -418,20 +482,6 @@ func OpenBAMD(r io.ReadSeeker, palettePath string) (*BAM, error) {
 		Palette:         d.colorMap,
 	}
 	bam.RebuildSequencesAndDropFrames()
-	if _, err := os.Stat(palettePath); err == nil {
-		log.Printf("Using palette at: %s\n", palettePath)
-		paletteFile, err := os.Open(palettePath)
-		if err != nil {
-			return nil, fmt.Errorf("Unable to open palette %s: %v", palettePath, err)
-		}
-		defer paletteFile.Close()
-
-		palette_template_img, err := png.Decode(paletteFile)
-		if err != nil {
-			return nil, fmt.Errorf("Unable to decode png %s: %v", palettePath, err)
-		}
-		bam.Palette = palette_template_img.ColorModel().(color.Palette)
-	}
 
 	return bam, nil
 }
@@ -519,7 +569,48 @@ func MakeBamFromGif(animation *gif.GIF, sequences []image.Point) (*BAM, error) {
 	return bam, nil
 }
 
+func (bam *BAM) ExpandAndCenterImages() {
+	maxW, maxH := 0, 0
+	for idx, img := range bam.Image {
+		f := bam.Frames[idx]
+		dx := img.Bounds().Dx()
+		dy := img.Bounds().Dy()
+
+		if f.CenterX < 0 {
+			dx += int(f.CenterX) * -2
+		} else {
+			dx += int(f.CenterX) * 2
+		}
+		if f.CenterY < 0 {
+			dy += int(f.CenterY) * -2
+		} else {
+			dy += int(f.CenterY) * 2
+		}
+
+		if dx > maxW {
+			maxW = dx
+		}
+		if dy > maxH {
+			maxH = dy
+		}
+	}
+	log.Printf("MaxX: %d MaxY: %d\n", maxW, maxH)
+	for idx, img := range bam.Image {
+		f := bam.Frames[idx]
+		if f.CenterX != 0 || f.CenterY != 0 {
+			offsetX := maxW/2 - int(f.CenterX)
+			offsetY := maxH/2 - int(f.CenterY)
+
+			i := image.NewPaletted(image.Rect(0, 0, maxW, maxH), img.Palette)
+			draw.Draw(i, image.Rect(offsetX, offsetY, offsetX+int(f.Width), offsetY+int(f.Height)), &img, image.ZP, draw.Over)
+			bam.Image[idx] = *i
+
+		}
+	}
+}
+
 func (bam *BAM) MakeGif(outputPath string, name string) error {
+	bam.ExpandAndCenterImages()
 	for idx, seq := range bam.Sequences {
 		if seq.Start >= 0 && seq.Count > 0 {
 			pathname := filepath.Join(outputPath, fmt.Sprintf("%s_%03d.gif", name, idx))
@@ -734,6 +825,12 @@ func (bam *BAM) MakeBamd(output string, name string, mirror bool, offset_x int, 
 	}
 }
 
+func colorsEqual(a, b color.Color) bool {
+	r1, b1, g1, a1 := a.RGBA()
+	r2, b2, g2, a2 := b.RGBA()
+	return r1 == r2 && b1 == b2 && g1 == g2 && a1 == a2
+}
+
 func trimBounds(img image.Image) image.Rectangle {
 	bounds := img.Bounds()
 	firstX := bounds.Max.X
@@ -741,10 +838,12 @@ func trimBounds(img image.Image) image.Rectangle {
 	lastX := bounds.Min.X
 	lastY := bounds.Min.Y
 	transColor := color.RGBA{0, 255, 0, 255}
+	transCount := 0
 
 	for y := bounds.Min.Y; y < bounds.Max.Y; y++ {
 		for x := bounds.Min.X; x < bounds.Max.X; x++ {
-			if img.At(x, y) != transColor {
+			c := img.At(x, y)
+			if !colorsEqual(c, transColor) {
 				if y < firstY {
 					firstY = y
 				}
@@ -757,8 +856,18 @@ func trimBounds(img image.Image) image.Rectangle {
 				if x > lastX {
 					lastX = x
 				}
+			} else {
+				transCount++
 			}
 		}
+	}
+
+	// Image is entirely transparent, so just return a 1x1 rect
+	if transCount == bounds.Dx()*bounds.Dy() {
+		firstX = 0
+		firstY = 0
+		lastX = 1
+		lastY = 1
 	}
 
 	return image.Rect(firstX, firstY, lastX, lastY)

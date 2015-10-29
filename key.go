@@ -20,6 +20,8 @@ type keyHeader struct {
 	ResourceOffset     uint32
 }
 
+type KeyHeader keyHeader
+
 type keyBifEntry struct {
 	Length         uint32
 	OffsetFilename uint32
@@ -173,6 +175,17 @@ func (key *KEY) ExtToType(ext string) int {
 	fileExt := strings.Trim(ext, ".")
 	return fileTypes[fileExt]
 }
+func (key *KEY) GetFilesByType(ext int) []string {
+	var names []string
+	for _, res := range key.resources {
+		if res.Type == uint16(ext) {
+			name := string(res.CleanName()) + "." + key.TypeToExt(res.Type)
+			names = append(names, name)
+		}
+	}
+
+	return names
+}
 
 func (key *KEY) GetResourceName(biffId uint32, resourceId uint32) (string, error) {
 	nID := uint32((biffId << 20) | (resourceId & 0x3fff))
@@ -280,6 +293,7 @@ func (key *KEY) OpenFile(name string) ([]byte, error) {
 	}
 	return buf, nil
 }
+
 /*
 
 func CreateKeyFromDir(input_dir string, output_dir string) error {
