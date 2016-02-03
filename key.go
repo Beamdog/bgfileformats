@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"log"
 	"os"
 	"path"
@@ -87,6 +88,9 @@ var fileTypes = map[string]int{
 	"glsl": 1029,
 	"tot":  1030,
 	"toh":  1031,
+	"menu": 1032,
+	"lua":  1033,
+	"ini":  2050,
 }
 var fileTypesExt = map[int]string{}
 
@@ -273,7 +277,16 @@ func (key *KEY) OpenFile(name string) ([]byte, error) {
 	kur := keyUniqueResource{Name: resName, Type: uint16(resType)}
 	res := key.files[kur]
 	if res == nil {
-		return nil, errors.New("Unable to find file")
+		// Attempt to open from file system
+		f, err := os.Open(filepath.Join(key.root, "override", name))
+		if err != nil {
+			return nil, fmt.Errorf("Unable to find file in key or override: %s", name)
+		}
+		buf, err := ioutil.ReadAll(f)
+		if err != nil {
+			return nil, fmt.Errorf("Unable to read file: %s", name)
+		}
+		return buf, nil
 	}
 	bifPath, _ := key.GetBifPath(res.GetBifId())
 

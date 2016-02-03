@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"io"
 	"os"
+	"strconv"
 )
 
 type dlgHeader struct {
@@ -22,14 +23,14 @@ type dlgHeader struct {
 	Flags                   uint32
 }
 
-type dlgState struct {
+type DlgState struct {
 	Stringref       uint32
 	TransitionIndex uint32
 	TransitionCount uint32
 	TriggerIndex    int32
 }
 
-type dlgTransition struct {
+type DlgTransition struct {
 	Flags                  uint32
 	TransitionText         uint32
 	JournalText            uint32
@@ -46,35 +47,35 @@ type dlgOffsetLength struct {
 
 type DLG struct {
 	Header             dlgHeader
-	States             []dlgState
-	Transitions        []dlgTransition
+	States             []DlgState
+	Transitions        []DlgTransition
 	StateTriggers      []string
 	TransitionTriggers []string
 	Actions            []string
 }
 
-func (trans *dlgTransition) HasText() bool {
+func (trans *DlgTransition) HasText() bool {
 	return trans.Flags&0x0001 == 0x0001
 }
-func (trans *dlgTransition) HasTrigger() bool {
+func (trans *DlgTransition) HasTrigger() bool {
 	return trans.Flags&0x0002 == 0x0002
 }
-func (trans *dlgTransition) HasAction() bool {
+func (trans *DlgTransition) HasAction() bool {
 	return trans.Flags&0x0004 == 0x0004
 }
-func (trans *dlgTransition) TerminatesDialog() bool {
+func (trans *DlgTransition) TerminatesDialog() bool {
 	return trans.Flags&0x0008 == 0x0008
 }
-func (trans *dlgTransition) HasJournal() bool {
+func (trans *DlgTransition) HasJournal() bool {
 	return trans.Flags&0x0010 == 0x0010
 }
-func (trans *dlgTransition) AddQuest() bool {
+func (trans *DlgTransition) AddQuest() bool {
 	return trans.Flags&0x0040 == 0x0040
 }
-func (trans *dlgTransition) RemoveQuest() bool {
+func (trans *DlgTransition) RemoveQuest() bool {
 	return trans.Flags&0x0080 == 0x0080
 }
-func (trans *dlgTransition) AddCompleteQuest() bool {
+func (trans *DlgTransition) AddCompleteQuest() bool {
 	return trans.Flags&0x0100 == 0x0100
 }
 
@@ -135,7 +136,7 @@ func OpenDlg(r io.ReadSeeker) (*DLG, error) {
 		return nil, err
 	}
 
-	dlg.States = make([]dlgState, dlg.Header.StateCount)
+	dlg.States = make([]DlgState, dlg.Header.StateCount)
 	_, err = r.Seek(int64(dlg.Header.StateOffset), os.SEEK_SET)
 	if err != nil {
 		return nil, err
@@ -145,7 +146,7 @@ func OpenDlg(r io.ReadSeeker) (*DLG, error) {
 		return nil, err
 	}
 
-	dlg.Transitions = make([]dlgTransition, dlg.Header.TransitionCount)
+	dlg.Transitions = make([]DlgTransition, dlg.Header.TransitionCount)
 	_, err = r.Seek(int64(dlg.Header.TransitionOffset), os.SEEK_SET)
 	if err != nil {
 		return nil, err
@@ -217,4 +218,42 @@ func (dialog *DLG) WriteJson(w io.Writer) error {
 
 	_, err = w.Write(bytes)
 	return err
+}
+
+type dlgEdge struct {
+	Id     string `json:"id"`
+	Source string `json:"source"`
+	Target string `json:"target"`
+}
+
+type dlgNode struct {
+	X     float32 `json:"x"`
+	Y     float32 `json:"y"`
+	Label string  `json:"label"`
+	Id    string  `json:"id"`
+	Color string  `json:"color"`
+	Size  float32 `json:"size"`
+}
+
+type dlgGraph struct {
+	Edges []dlgEdge
+	Nodes []dlgNode
+}
+
+func fetch(tlk *TLK, id uint32) string {
+	str, _ := tlk.String(int(id))
+	return str
+}
+
+func (d *DLG) ToJson(tlk *TLK) ([]byte, error) {
+	var graph dlgGraph
+	for i, state := range d.States {
+		graph.Nodes = append(graph.Nodes, dlgNode{Label: fetch(tlk, state.Stringref), Id: strconv.Itoa(i)})
+	}
+	for i, t := range d.Transitions {
+		graph.Edges = append(graph.Edges, dlgEdge{Source: "_" + strconv.Itoa(i), Target: t.NextDlg.String() + "_" + strconv.Itoa(int(t.NextState)), Id: strconv.Itoa(i)})
+
+	}
+
+	return json.MarshalIndent(graph, "", "\t")
 }

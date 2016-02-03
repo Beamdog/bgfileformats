@@ -58,7 +58,7 @@ type tisTile struct {
 
 type tisPvrTexture struct {
 	Header tisPVRTextureHeaderV3
-	image  *image.RGBA
+	Image  *image.RGBA
 	name   string
 }
 
@@ -72,7 +72,7 @@ func (tis *Tis) SubImage(tileNum int) *image.RGBA {
 		if tileNum < len(tis.tiles) && tileNum >= 0 {
 			tile := tis.tiles[tileNum]
 			log.Printf("tile: tilenum: %d %+v\n", tileNum, tile)
-			draw.Draw(img, tileBounds, tis.textures[tile.Texture].image, image.Pt(int(tile.X), int(tile.Y)), draw.Src)
+			draw.Draw(img, tileBounds, tis.textures[tile.Texture].Image, image.Pt(int(tile.X), int(tile.Y)), draw.Src)
 		} else {
 			log.Printf("Tilename: %d is greater then %d\n", tileNum, len(tis.tiles))
 			panic("omg")
@@ -161,7 +161,7 @@ func (tis *Tis) readV1(r io.ReadSeeker) error {
 }
 
 func (tex *tisPvrTexture) decompressDXT1(block []uint8) {
-	tex.image = image.NewRGBA(image.Rect(0, 0, int(tex.Header.Width), int(tex.Header.Height)))
+	tex.Image = image.NewRGBA(image.Rect(0, 0, int(tex.Header.Width), int(tex.Header.Height)))
 	//tex.Image = image.NewRGBA(image.Rect(0, 0, int(tex.Header.Width), 8))
 
 	blockCountX := (tex.Header.Width + 3) / 4
@@ -171,9 +171,26 @@ func (tex *tisPvrTexture) decompressDXT1(block []uint8) {
 
 	for j := uint32(0); j < blockCountY; j++ {
 		for i := uint32(0); i < blockCountX; i++ {
-			DecompressBlockDXT1Internal(block[offset+int(i)*8:offset+int(i)*8+8], tex.image, image.Pt(int(i*4), int(j*4)))
+			DecompressBlockDXT1Internal(block[offset+int(i)*8:offset+int(i)*8+8], tex.Image, image.Pt(int(i*4), int(j*4)))
 		}
 		offset += int(blockCountX) * 8
+	}
+}
+
+func (tex *tisPvrTexture) decompressDXT5(block []uint8) {
+	tex.Image = image.NewRGBA(image.Rect(0, 0, int(tex.Header.Width), int(tex.Header.Height)))
+	//tex.Image = image.NewRGBA(image.Rect(0, 0, int(tex.Header.Width), 8))
+
+	blockCountX := (tex.Header.Width + 3) / 4
+	blockCountY := (tex.Header.Height + 3) / 4
+
+	offset := 0
+
+	for j := uint32(0); j < blockCountY; j++ {
+		for i := uint32(0); i < blockCountX; i++ {
+			DecompressBlockDXT5Internal(block[offset+int(i)*16:offset+int(i)*16+16], tex.Image, image.Pt(int(i*4), int(j*4)))
+		}
+		offset += int(blockCountX) * 16
 	}
 }
 
@@ -207,7 +224,6 @@ func NewPVRTexture(r io.ReadSeeker) (*tisPvrTexture, error) {
 	data := bytes.NewReader(uncompressed)
 	data.Seek(0, os.SEEK_SET)
 	binary.Read(data, binary.LittleEndian, &tex.Header)
-	log.Printf("Header: %+v %d\n", tex.Header, binary.Size(tex.Header))
 
 	switch tex.Header.PixelFormatlo {
 	case 0: // 2BPP RGB PVRTC
@@ -217,7 +233,9 @@ func NewPVRTexture(r io.ReadSeeker) (*tisPvrTexture, error) {
 	case 7: // DXT1
 		tex.decompressDXT1(uncompressed[binary.Size(tex.Header):])
 	case 9: // DXT3
+		return nil, fmt.Errorf("DXT3 decompression not supported")
 	case 11: // DXT5
+		tex.decompressDXT5(uncompressed[binary.Size(tex.Header):])
 	}
 
 	return &tex, nil
