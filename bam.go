@@ -35,6 +35,7 @@ func next_pow_two(v uint) uint {
 
 type BAM struct {
 	Image           []image.Paletted
+	ImageRgba       []image.RGBA
 	Sequences       []BamSequence
 	SequenceToImage []int16
 	Width           int
@@ -68,6 +69,24 @@ type BamHeader struct {
 	FrameLutOffset     uint32
 }
 
+type BamHeaderV2 struct {
+	Signature, Version                         [4]byte
+	Frames, Sequences, Quads                   uint32
+	FramesOffset, SequencesOffset, QuadsOffset uint32
+}
+
+type BamFrameV2 struct {
+	Width, Height    uint16
+	CenterX, CenterY int16
+	QuadStart        int16
+	QuadCount        int16
+}
+
+type BamMosaicQuad struct {
+	Texture            int32
+	X, Y, W, H, SX, SY int32
+}
+
 type BamCHeader struct {
 	Signature, Version [4]byte
 	UncompressedSize   uint32
@@ -79,8 +98,8 @@ type decoder struct {
 	Cycles        []BamCycle
 	Palette       []uint32
 	FrameLUT      []int16
-	FrameData     [][]byte
 	image         []image.Paletted
+	imageRgba     []image.RGBA
 	colorMap      color.Palette
 	width         int
 	height        int
@@ -186,7 +205,7 @@ func (d *decoder) decode_bamd(r io.Reader) error {
 		} else if strings.ToLower(s.TokenText()) == "sequence" {
 			frames := make([]string, 0)
 			sequences := make([]uint16, 0)
-			for tok = s.Scan(); !(s.TokenText() == "\n" || s.TokenText() == "\r"); tok = s.Scan() {
+			for tok = s.Scan(); !(s.TokenText() == "\n" || s.TokenText() == "\r" || tok == scanner.EOF); tok = s.Scan() {
 				frame := strings.TrimSpace(s.TokenText())
 				frames = append(frames, frame)
 				sequences = append(sequences, uint16(frameNames[frame]))
@@ -326,34 +345,10 @@ func (d *decoder) decode_bamd(r io.Reader) error {
 	return nil
 }
 
-func (d *decoder) decode(r io.Reader, configOnly bool) error {
-	data, err := ioutil.ReadAll(r)
-	if err != nil {
-		return fmt.Errorf("Unable to read bam: %v", err)
-	}
-	bamFile := bytes.NewReader(data)
-	binary.Read(bamFile, binary.LittleEndian, &d.Header)
-
-	if string(d.Header.Signature[0:]) == "BAMC" {
-		bamFile.Seek(0x0C, os.SEEK_SET)
-		r, err := zlib.NewReader(bamFile)
-		if err != nil {
-			return fmt.Errorf("Unable to zlib decompress BAMC file: %v", err)
-		}
-		uncompressed, err := ioutil.ReadAll(r)
-		bamFile = bytes.NewReader(uncompressed)
-		binary.Read(bamFile, binary.LittleEndian, &d.Header)
-		data = uncompressed
-	}
-
-	if string(d.Header.Signature[0:]) != "BAM " {
-		return fmt.Errorf("First 4 bytes not BAM ")
-	}
-
+func (d *decoder) readv1(r io.ReadSeeker, data []byte) error {
 	d.Frames = make([]BamFrame, uint64(d.Header.Frames))
-	d.FrameData = make([][]byte, uint64(d.Header.Frames))
-	bamFile.Seek(int64(d.Header.FrameOffset), 0)
-	err = binary.Read(bamFile, binary.LittleEndian, &d.Frames)
+	r.Seek(int64(d.Header.FrameOffset), 0)
+	err := binary.Read(r, binary.LittleEndian, &d.Frames)
 	if err != nil {
 		return fmt.Errorf("Unable to read frames from bam")
 	}
@@ -367,11 +362,11 @@ func (d *decoder) decode(r io.Reader, configOnly bool) error {
 	}
 
 	d.Cycles = make([]BamCycle, uint64(d.Header.Cycles))
-	binary.Read(bamFile, binary.LittleEndian, &d.Cycles)
+	binary.Read(r, binary.LittleEndian, &d.Cycles)
 
 	d.Palette = make([]uint32, 256)
-	bamFile.Seek(int64(d.Header.PaletteOffset), 0)
-	binary.Read(bamFile, binary.LittleEndian, &d.Palette)
+	r.Seek(int64(d.Header.PaletteOffset), 0)
+	binary.Read(r, binary.LittleEndian, &d.Palette)
 	d.colorMap = make([]color.Color, 256)
 	for idx, c := range d.Palette {
 		r, g, b := uint8((c>>16)&0xff), uint8((c>>8)&0xff), uint8((c>>0)&0xff)
@@ -388,8 +383,8 @@ func (d *decoder) decode(r io.Reader, configOnly bool) error {
 		}
 	}
 	d.FrameLUT = make([]int16, totalFrameLut)
-	bamFile.Seek(int64(d.Header.FrameLutOffset), 0)
-	binary.Read(bamFile, binary.LittleEndian, &d.FrameLUT)
+	r.Seek(int64(d.Header.FrameLutOffset), 0)
+	binary.Read(r, binary.LittleEndian, &d.FrameLUT)
 
 	for _, frame := range d.Frames {
 		if frame.Width == 0 || frame.Height == 0 {
@@ -400,9 +395,9 @@ func (d *decoder) decode(r io.Reader, configOnly bool) error {
 		img := image.NewPaletted(image.Rect(0, 0, int(frame.Width), int(frame.Height)), d.colorMap)
 		// uncompressed
 		if frame.FrameOffset&0x80000000 != 0 {
-			bamFile.Seek(int64(frame.FrameOffset&0x7FFFFFFF), 0)
+			r.Seek(int64(frame.FrameOffset&0x7FFFFFFF), 0)
 
-			binary.Read(bamFile, binary.LittleEndian, &img.Pix)
+			binary.Read(r, binary.LittleEndian, &img.Pix)
 		} else {
 			dataOffset := 0
 			compressed := false
@@ -431,17 +426,108 @@ func (d *decoder) decode(r io.Reader, configOnly bool) error {
 		}
 		d.image = append(d.image, *img)
 	}
+	return nil
+}
+func (d *decoder) readv2(r io.ReadSeeker, data []byte, key *KEY) error {
+	if key == nil {
+		return fmt.Errorf("V2 bams not supported if no key specified")
+	}
+	var header BamHeaderV2
+	r.Seek(0, os.SEEK_SET)
+	err := binary.Read(r, binary.LittleEndian, &header)
+	if err != nil {
+		return fmt.Errorf("Unable to read frames from bam")
+	}
+
+	v2Frames := make([]BamFrameV2, uint64(header.Frames))
+	r.Seek(int64(header.FramesOffset), os.SEEK_SET)
+	err = binary.Read(r, binary.LittleEndian, &v2Frames)
+	if err != nil {
+		return fmt.Errorf("Unable to read frames from bam")
+	}
+	for _, frame := range v2Frames {
+		if d.width < int(frame.Width)+int(frame.CenterX)*2 {
+			d.width = int(frame.Width) + int(frame.CenterX)*2
+		}
+		if d.height < int(frame.Height)+int(frame.CenterY)*2 {
+			d.height = int(frame.Height) + int(frame.CenterY)*2
+		}
+	}
+
+	d.Cycles = make([]BamCycle, uint64(header.Sequences))
+	r.Seek(int64(header.SequencesOffset), os.SEEK_SET)
+	binary.Read(r, binary.LittleEndian, &d.Cycles)
+
+	quads := make([]BamMosaicQuad, uint64(header.Quads))
+	r.Seek(int64(header.QuadsOffset), os.SEEK_SET)
+	binary.Read(r, binary.LittleEndian, &quads)
+
+	for _, frame := range v2Frames {
+		source := image.NewRGBA(image.Rect(0, 0, d.width, d.height))
+		for i := frame.QuadStart; i < frame.QuadStart+frame.QuadCount; i++ {
+			quad := quads[i]
+			filename := fmt.Sprintf("mos%04d.pvrz", quad.Texture)
+			pvrzData, err := key.OpenFile(filename)
+			if err != nil {
+				return fmt.Errorf("Error loading pvrz: %s %v", filename, err)
+			}
+			buf := bytes.NewReader(pvrzData)
+			tex, err := NewPVRTexture(buf)
+			if err != nil {
+				return fmt.Errorf("Error parsing pvrz data: %v", err)
+			}
+			rect := image.Rect(int(quad.SX), int(quad.SY), int(quad.SX+quad.W), int(quad.SY+quad.H))
+			pt := image.Pt(int(quad.X), int(quad.Y))
+			draw.Draw(source, rect, tex.Image, pt, draw.Over)
+		}
+		d.imageRgba = append(d.imageRgba, *source)
+	}
 
 	return nil
 }
 
-func OpenBAM(r io.ReadSeeker) (*BAM, error) {
+func (d *decoder) decode(r io.Reader, configOnly bool, key *KEY) error {
+	data, err := ioutil.ReadAll(r)
+	if err != nil {
+		return fmt.Errorf("Unable to read bam: %v", err)
+	}
+	bamFile := bytes.NewReader(data)
+	binary.Read(bamFile, binary.LittleEndian, &d.Header)
+
+	if string(d.Header.Signature[0:]) == "BAMC" {
+		bamFile.Seek(0x0C, os.SEEK_SET)
+		r, err := zlib.NewReader(bamFile)
+		if err != nil {
+			return fmt.Errorf("Unable to zlib decompress BAMC file: %v", err)
+		}
+		uncompressed, err := ioutil.ReadAll(r)
+		bamFile = bytes.NewReader(uncompressed)
+		binary.Read(bamFile, binary.LittleEndian, &d.Header)
+		data = uncompressed
+	}
+
+	if string(d.Header.Signature[0:]) != "BAM " {
+		return fmt.Errorf("First 4 bytes not BAM ")
+	}
+
+	//
+	if string(d.Header.Version[0:]) == "V2  " {
+		return d.readv2(bamFile, data, key)
+	} else if string(d.Header.Version[0:]) == "V1  " {
+		return d.readv1(bamFile, data)
+	}
+
+	return nil
+}
+
+func OpenBAM(r io.ReadSeeker, key *KEY) (*BAM, error) {
 	var d decoder
-	if err := d.decode(r, false); err != nil {
+	if err := d.decode(r, false, key); err != nil {
 		return nil, err
 	}
 	bam := &BAM{
 		Image:           d.image,
+		ImageRgba:       d.imageRgba,
 		Sequences:       d.sequences,
 		SequenceToImage: d.FrameLUT,
 		Width:           d.width,
