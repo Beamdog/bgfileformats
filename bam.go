@@ -315,8 +315,12 @@ func (d *decoder) decode_bamd(r io.Reader) error {
 		log.Printf("palette size: %d", len(paletteImg.Palette))
 		paletteImg.Palette[0] = color.RGBA{0, 255, 0, 255}
 		paletteImg.Palette[1] = color.RGBA{128, 128, 128, 255}
-		paletteImg.Palette[2] = color.RGBA{255, 128, 0, 255}
-		paletteImg.Palette[3] = color.RGBA{255, 128, 0, 255}
+		if len(paletteImg.Palette) > 2 {
+			paletteImg.Palette[2] = color.RGBA{255, 128, 0, 255}
+		}
+		if len(paletteImg.Palette) > 3 {
+			paletteImg.Palette[3] = color.RGBA{255, 128, 0, 255}
+		}
 		d.colorMap = paletteImg.Palette
 	}
 
@@ -328,11 +332,10 @@ func (d *decoder) decode_bamd(r io.Reader) error {
 				col := i.At(x, y)
 				replace, ok := d.replaceColor[col]
 				_, _, _, a := col.RGBA()
-				if ok {
-					img.Set(x, y, d.colorMap[replace])
-				} else if a == 0 {
-					log.Printf("Alpha 0")
+				if a == 0 {
 					img.Set(x, y, d.colorMap[0])
+				} else if ok {
+					img.Set(x, y, d.colorMap[replace])
 				} else {
 					img.Set(x, y, col)
 				}
@@ -791,7 +794,7 @@ func (bam *BAM) MakeBam(wRaw io.Writer) error {
 		r = r >> 8
 		g = g >> 8
 		b = b >> 8
-		a = a >> 8
+		a = 0xff
 
 		palette[i] = (uint32(a) << 24) | (uint32(r) << 16) | (uint32(g) << 8) | uint32(b)
 	}
