@@ -2,9 +2,10 @@ package bg
 
 import (
 	"bytes"
-	"code.google.com/p/lzma"
 	"io"
 	"os"
+
+	"code.google.com/p/lzma"
 	//	"compress/zlib"
 	"encoding/binary"
 	"errors"

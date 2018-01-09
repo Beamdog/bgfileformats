@@ -12,7 +12,7 @@ func TestSvgParseAbsolutePath(t *testing.T) {
 	if len(path.Polygons) != 1 {
 		t.Errorf("Did not generate 1 polygon: %+v\n", path)
 	}
-	expectedPoints := []svgVert{{100,100,}, {300, 100}, {200, 300}}
+	expectedPoints := []svgVert{{100, 100}, {300, 100}, {200, 300}}
 	for idx, pt := range expectedPoints {
 		if path.Polygons[0].Points[idx] != pt {
 			t.Errorf("Point[%d] %v != %v", idx, path.Polygons[0].Points[idx], pt)
@@ -28,7 +28,7 @@ func testSvgParseAbsoluteRepeatCommands(t *testing.T) {
 	if len(path.Polygons) != 1 {
 		t.Errorf("Did not generate 1 polygon: %+v\n", path)
 	}
-	expectedPoints := []svgVert{{100,100,}, {300, 100}, {200, 300}}
+	expectedPoints := []svgVert{{100, 100}, {300, 100}, {200, 300}}
 	for idx, pt := range expectedPoints {
 		if path.Polygons[0].Points[idx] != pt {
 			t.Errorf("Point[%d] %v != %v", idx, path.Polygons[0].Points[idx], pt)
@@ -44,7 +44,7 @@ func TestSvgParseRelative(t *testing.T) {
 	if len(path.Polygons) != 1 {
 		t.Errorf("Did not generate 1 polygon: %+v\n", path)
 	}
-	expectedPoints := []svgVert{{100,100}, {300, 100}, {200, 300}}
+	expectedPoints := []svgVert{{100, 100}, {300, 100}, {200, 300}}
 	for idx, pt := range expectedPoints {
 		if path.Polygons[0].Points[idx] != pt {
 			t.Errorf("Point[%d] %v != %v", idx, path.Polygons[0].Points[idx], pt)
@@ -60,7 +60,7 @@ func TestSvgParseCommas(t *testing.T) {
 	if len(path.Polygons) != 1 {
 		t.Errorf("Did not generate 1 polygon: %+v\n", path)
 	}
-	expectedPoints := []svgVert{{100,101}, {300, 101}, {200, 301}}
+	expectedPoints := []svgVert{{100, 101}, {300, 101}, {200, 301}}
 	for idx, pt := range expectedPoints {
 		if path.Polygons[0].Points[idx] != pt {
 			t.Errorf("Point[%d] %v != %v", idx, path.Polygons[0].Points[idx], pt)
@@ -76,11 +76,10 @@ func TestSvgParseFloats(t *testing.T) {
 	if len(path.Polygons) != 1 {
 		t.Errorf("Did not generate 1 polygon: %+v\n", path)
 	}
-	expectedPoints := []svgVert{{100,101}, {300, 101}, {200, 301}}
+	expectedPoints := []svgVert{{100, 101}, {300, 101}, {200, 301}}
 	for idx, pt := range expectedPoints {
 		if path.Polygons[0].Points[idx] != pt {
 			t.Errorf("Point[%d] %v != %v", idx, path.Polygons[0].Points[idx], pt)
 		}
 	}
 }
-

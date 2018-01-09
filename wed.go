@@ -3,12 +3,12 @@ package bg
 import (
 	"encoding/binary"
 	"encoding/json"
+	"fmt"
 	"image"
 	"image/draw"
 	"image/png"
 	"io"
 	"os"
-	"fmt"
 )
 
 type wedHeader struct {
@@ -20,11 +20,11 @@ type wedHeader struct {
 	DoorOffset          uint32
 	DoorTileCellsOffset uint32
 	/*
-	VisibilityRange     uint16
-	ChanceOfRain        uint16
-	ChanceOfFog         uint16
-	ChanceOfSnow        uint16
-	Flags               uint32*/
+		VisibilityRange     uint16
+		ChanceOfRain        uint16
+		ChanceOfFog         uint16
+		ChanceOfSnow        uint16
+		Flags               uint32*/
 
 }
 

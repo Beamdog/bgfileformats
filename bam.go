@@ -138,6 +138,7 @@ func (d *decoder) decode_bamd(r io.Reader) error {
 	d.replaceColor = map[color.Color]int{}
 
 	useImagePalette := false
+	useSmallPalette := false
 	for tok := s.Scan(); tok != scanner.EOF; tok = s.Scan() {
 		if strings.ToLower(s.TokenText()) == "frame" {
 			center_x, center_y := 0, 0
@@ -246,14 +247,15 @@ func (d *decoder) decode_bamd(r io.Reader) error {
 
 		} else if strings.ToLower(s.TokenText()) == "usepalette" {
 			useImagePalette = true
-
+		} else if strings.ToLower(s.TokenText()) == "smallpalette" {
+			useSmallPalette = true
 		}
 
 	}
 
 	paletteImg, ok := imgFrames[0].(*image.Paletted)
 	quantizeImage := false
-	if ok {
+	if ok && len(imgFrames) == 1 {
 		log.Printf("Using existing palette")
 		useImagePalette = true
 
@@ -295,13 +297,20 @@ func (d *decoder) decode_bamd(r io.Reader) error {
 		}
 
 		palette := make([]color.Color, 256)
-		palette[0] = color.RGBA{0, 255, 0, 255}
-		palette[1] = color.RGBA{128, 128, 128, 255}
-		palette[2] = color.RGBA{255, 128, 0, 255}
-		palette[3] = color.RGBA{255, 128, 0, 255}
+		var numPalette int
+		if useSmallPalette {
+			numPalette = 1
+			palette[0] = color.RGBA{0, 255, 0, 255}
+		} else {
+			numPalette = 4
+			palette[0] = color.RGBA{0, 255, 0, 255}
+			palette[1] = color.RGBA{128, 128, 128, 255}
+			palette[2] = color.RGBA{255, 128, 0, 255}
+			palette[3] = color.RGBA{255, 128, 0, 255}
+		}
 		paletteImg = image.NewPaletted(image.Rect(0, 0, width, maxHeight), palette)
 
-		mcq := MedianCutQuantizer{252, nil}
+		mcq := MedianCutQuantizer{255 - numPalette, nil}
 		mcq.Quantize(paletteImg, image.Rect(0, 0, width, maxHeight), contactSheet, image.Pt(0, 0))
 
 		/*
@@ -314,12 +323,14 @@ func (d *decoder) decode_bamd(r io.Reader) error {
 		*/
 		log.Printf("palette size: %d", len(paletteImg.Palette))
 		paletteImg.Palette[0] = color.RGBA{0, 255, 0, 255}
-		paletteImg.Palette[1] = color.RGBA{128, 128, 128, 255}
-		if len(paletteImg.Palette) > 2 {
-			paletteImg.Palette[2] = color.RGBA{255, 128, 0, 255}
-		}
-		if len(paletteImg.Palette) > 3 {
-			paletteImg.Palette[3] = color.RGBA{255, 128, 0, 255}
+		if !useSmallPalette {
+			paletteImg.Palette[1] = color.RGBA{128, 128, 128, 255}
+			if len(paletteImg.Palette) > 2 {
+				paletteImg.Palette[2] = color.RGBA{255, 128, 0, 255}
+			}
+			if len(paletteImg.Palette) > 3 {
+				paletteImg.Palette[3] = color.RGBA{255, 128, 0, 255}
+			}
 		}
 		d.colorMap = paletteImg.Palette
 	}
