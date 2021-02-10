@@ -310,7 +310,7 @@ func (d *decoder) decode_bamd(r io.Reader) error {
 		}
 		paletteImg = image.NewPaletted(image.Rect(0, 0, width, maxHeight), palette)
 
-		mcq := MedianCutQuantizer{255 - numPalette, nil}
+		mcq := MedianCutQuantizer{256 - numPalette, nil}
 		mcq.Quantize(paletteImg, image.Rect(0, 0, width, maxHeight), contactSheet, image.Pt(0, 0))
 
 		/*
@@ -321,18 +321,17 @@ func (d *decoder) decode_bamd(r io.Reader) error {
 			png.Encode(fPal, paletteImg)
 			fPal.Close()
 		*/
+
 		log.Printf("palette size: %d", len(paletteImg.Palette))
-		paletteImg.Palette[0] = color.RGBA{0, 255, 0, 255}
-		if !useSmallPalette {
-			paletteImg.Palette[1] = color.RGBA{128, 128, 128, 255}
-			if len(paletteImg.Palette) > 2 {
-				paletteImg.Palette[2] = color.RGBA{255, 128, 0, 255}
-			}
-			if len(paletteImg.Palette) > 3 {
-				paletteImg.Palette[3] = color.RGBA{255, 128, 0, 255}
-			}
+		// d.colorMap must have the required colours inserted ahead of paletteImg.Palette
+		d.colorMap = make([]color.Color, numPalette + len(paletteImg.Palette))
+		d.colorMap[0] = color.RGBA{0, 255, 0, 255}
+		if numPalette == 4 {
+			d.colorMap[1] = color.RGBA{128, 128, 128, 255}
+			d.colorMap[2] = color.RGBA{255, 128, 0, 255}
+			d.colorMap[3] = color.RGBA{255, 128, 0, 255}
 		}
-		d.colorMap = paletteImg.Palette
+		copy(d.colorMap[numPalette:], paletteImg.Palette)
 	}
 
 	for _, i := range imgFrames {
@@ -349,6 +348,9 @@ func (d *decoder) decode_bamd(r io.Reader) error {
 					img.Set(x, y, d.colorMap[replace])
 				} else {
 					img.Set(x, y, col)
+					//if !colorsEqual(col, img.At(x, y)) {
+					//	log.Printf("(%d, %d) : %x => %x", x, y, col, img.At(x, y))
+					//}
 				}
 			}
 		}

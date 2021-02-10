@@ -78,6 +78,35 @@ func (b *block) shrink() {
 	}
 }
 
+func (b *block) len() int {
+	return len(b.points)
+}
+
+func (b *block) medianIndex() int {
+	// This median cut implementation doesn't rely on blocks being cut exactly in half, in practice
+	// we can improve the result by adjusting the split point to not fall within one color group so
+	// that ultimately we do not split a color across multiple blocks.
+	// This assumes the block is already sorted by longestSideIndex, although nothing bad will 
+	// happen if it isn't.
+	length := len(b.points)
+	mid := length / 2
+	li := b.longestSideIndex()
+	midVal := b.points[mid][li]
+	left := mid;
+	right := mid + 1;
+
+	for ; left > 0 && midVal == b.points[left-1][li]; left-- {}
+	for ; right < length && midVal == b.points[right][li]; right++ {}
+
+	if left > 0 && mid - left < right - mid {
+		return left
+	} else if right < length {
+		return right
+	} else {
+		return mid
+	}
+}
+
 type pointSorter struct {
 	points []point
 	by     func(p1, p2 *point) bool
@@ -101,7 +130,10 @@ type priorityQueue []*block
 func (pq priorityQueue) Len() int { return len(pq) }
 
 func (pq priorityQueue) Less(i, j int) bool {
-	return pq[i].longestSideLength() > pq[j].longestSideLength()
+	li := pq[i].longestSideLength()
+	lj := pq[j].longestSideLength()
+	// choosing most diverse block, using number of pixels as a tiebreaker
+	return li > lj || (li == lj && pq[i].len() > pq[j].len())
 }
 
 func (pq priorityQueue) Swap(i, j int) {
@@ -124,14 +156,6 @@ func (pq *priorityQueue) Pop() interface{} {
 	item.index = -1 // for safety
 	*pq = old[:n-1]
 	return item
-}
-
-func (pq *priorityQueue) top() interface{} {
-	n := len(*pq)
-	if n == 0 {
-		return nil
-	}
-	return (*pq)[n-1]
 }
 
 // clip clips r against each image's bounds (after translating into
@@ -179,9 +203,16 @@ func (q *MedianCutQuantizer) medianCut(points []point) color.Palette {
 	heap.Init(pq)
 	heap.Push(pq, initialBlock)
 
-	for pq.Len() < q.NumColor && len(pq.top().(*block).points) > 1 {
+	for pq.Len() < q.NumColor {
 		longestBlock := heap.Pop(pq).(*block)
 		points := longestBlock.points
+		// Can't assume anything about order of blocks in heap, have to Pop before we can 
+		// determine if there is work left
+		if len(points) < 2 || longestBlock.longestSideLength() == 0 {
+			heap.Push(pq, longestBlock)
+			break
+		}
+
 		li := longestBlock.longestSideIndex()
 		// TODO: Instead of sorting the entire slice, finding the median using an
 		// algorithm like introselect would give much better performance.
@@ -189,7 +220,7 @@ func (q *MedianCutQuantizer) medianCut(points []point) color.Palette {
 			points: points,
 			by:     func(p1, p2 *point) bool { return p1[li] < p2[li] },
 		})
-		median := len(points) / 2
+		median := longestBlock.medianIndex()
 		block1 := newBlock(points[:median])
 		block2 := newBlock(points[median:])
 		block1.shrink()
@@ -232,8 +263,10 @@ func (q *MedianCutQuantizer) Quantize(dst *image.Paletted, r image.Rectangle, sr
 	for y := r.Min.Y; y < r.Max.Y; y++ {
 		for x := r.Min.X; x < r.Max.X; x++ {
 			c := src.At(x, y)
-			r, g, b, _ := c.RGBA()
-			if !(r == 0 && g == 0xffff && b == 0) {
+			r, g, b, a := c.RGBA()
+			// Exclude transparent (implicit or explicit) pixels from calculation, it is up to the
+			// caller to handle them.
+			if !(r == 0 && g == 0xffff && b == 0) && a != 0 {
 				colorSet[(r>>8)<<16|(g>>8)<<8|b>>8] = c
 				points[i][0] = int(r)
 				points[i][1] = int(g)
@@ -242,6 +275,8 @@ func (q *MedianCutQuantizer) Quantize(dst *image.Paletted, r image.Rectangle, sr
 			}
 		}
 	}
+	points = points[0:i] // shrink points slice as extra space was likely allocated for discarded transparent pixels
+
 	if len(colorSet) <= q.NumColor {
 		// No need to quantize since the total number of colors
 		// fits within the palette.

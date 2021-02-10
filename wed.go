@@ -3,7 +3,7 @@ package bg
 import (
 	"encoding/binary"
 	"encoding/json"
-	"fmt"
+	//"fmt"
 	"image"
 	"image/draw"
 	"image/png"
@@ -110,6 +110,7 @@ func (wed *Wed) ToJson() (string, error) {
 	return string(bytes[0:]), nil
 }
 
+/*
 func (wed *Wed) ToJsonWed() (*JsonWed, error) {
 	jw := JsonWed{}
 	err := jw.ImportOverlays(wed)
@@ -121,6 +122,7 @@ func (wed *Wed) ToJsonWed() (*JsonWed, error) {
 
 	return &jw, nil
 }
+*/
 
 func (wed *Wed) UpdateOffsets() {
 
