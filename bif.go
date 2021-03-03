@@ -1,11 +1,11 @@
 package bg
 
 import (
-	"bytes"
+	//"bytes"
 	"io"
 	"os"
 
-	"code.google.com/p/lzma"
+	//"code.google.com/p/lzma"
 	//	"compress/zlib"
 	"encoding/binary"
 	"errors"
@@ -249,6 +249,7 @@ func RepackageBiff(keyFile io.ReadSeeker, bifIn io.ReadSeeker, filesPath string,
 	return nil
 }
 
+/*
 func ConvertToBIFL(r io.ReadSeeker, w io.WriteSeeker) error {
 	r.Seek(0, os.SEEK_SET)
 	w.Seek(0, os.SEEK_SET)
@@ -315,6 +316,7 @@ func ConvertToBIFL(r io.ReadSeeker, w io.WriteSeeker) error {
 	}
 	return nil
 }
+*/
 
 /*
 func MakeBiffFromDir(outputFile string, fileRoot string, files []string, biffId int) (int, error) {
